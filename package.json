@@ -1,10 +1,11 @@
 {
-  "name": "slotenv-cli",
+  "name": "nocollide",
   "version": "0.3.1",
   "description": "Run parallel coding agents without collisions: each git worktree gets its own ports, .env, Postgres, MySQL, SQLite or Redis database and Compose project. No containers.",
   "type": "module",
   "bin": {
-    "slotenv": "dist/src/cli.js"
+    "slotenv": "dist/src/cli.js",
+    "nocollide": "dist/src/cli.js"
   },
   "files": [
     "dist/src"

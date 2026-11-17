@@ -1,24 +1,24 @@
 # slotenv
 
 [![CI](https://github.com/zzoraemon043/slotenv/actions/workflows/ci.yml/badge.svg)](https://github.com/zzoraemon043/slotenv/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/slotenv-cli.svg)](https://www.npmjs.com/package/slotenv-cli)
+[![npm](https://img.shields.io/npm/v/nocollide.svg)](https://www.npmjs.com/package/nocollide)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Run 5 coding agents in parallel. Zero port clashes. Zero shared databases. No containers.**
 
 ![slotenv init and hook install once. Then git worktree add gives each new worktree its own port and a copy of the Postgres database, and three agents run their dev servers on ports 3000, 3010 and 3020 against app_dev, app_dev_s1 and app_dev_s2.](docs/demo.gif)
 
-> Renamed from `nocollide`. Old `nocollide.json` files, hooks and env files keep working; `slotenv doctor` tells you what to rename.
+> Renamed from `nocollide`; the npm package is still `nocollide`. Old `nocollide.json` files, hooks and env files keep working; `slotenv doctor` tells you what to rename.
 
 > Status: v0.3 handles ports, `.env` files, Postgres, MySQL, SQLite, Redis and Docker Compose, and can set up new worktrees by itself through a git hook.
 
 ## Install
 
 ```bash
-npx slotenv-cli init
+npx nocollide init
 ```
 
-Or install it once with `npm install -g slotenv-cli`; the command is `slotenv`. Requires Node.js 22 or newer and git 2.31 or newer. Works on macOS, Linux and Windows.
+Or install it once with `npm install -g nocollide`; that gives you the `slotenv` command (`nocollide` works too). The npm package keeps its first name because npm reserves `slotenv` for being close to `dotenv`. Requires Node.js 22 or newer and git 2.31 or newer. Works on macOS, Linux and Windows.
 
 ## The problem
 
@@ -145,7 +145,7 @@ slotenv env --shell powershell | Invoke-Expression   # PowerShell
 Add one line to `AGENTS.md` or your agent's instructions file:
 
 ```text
-Before starting a dev server or tests in a worktree, run `npx slotenv-cli up` and use the ports and database URLs in .env.local.
+Before starting a dev server or tests in a worktree, run `npx nocollide up` and use the ports and database URLs in .env.local.
 ```
 
 Orchestrators can read `slotenv ls --json` and `slotenv env --json` instead of parsing text.

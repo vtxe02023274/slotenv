@@ -2,7 +2,7 @@
 
 ## 0.3.1
 
-- Renamed from `nocollide` to `slotenv`: the command and the repository. The npm package is `slotenv-cli`, because npm keeps `slotenv` for being too close to `dotenv`
+- Renamed from `nocollide` to `slotenv`: the command and the repository. The npm package stays `nocollide`, because npm reserves `slotenv` for being close to `dotenv`; it installs both the `slotenv` and the `nocollide` command
 - `slotenv.json` replaces `nocollide.json`; the old file is still read, and `doctor` asks you to rename it
 - `SLOTENV_HOME` and `SLOTENV_SLOT` replace `NOCOLLIDE_HOME` and `NOCOLLIDE_SLOT`; the old home variable, the `~/.nocollide` folder and `${NOCOLLIDE_SLOT}` placeholders still work
 - `hook install` replaces an old nocollide hook block, and `hook uninstall` removes either

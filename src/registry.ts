@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import type { CreatedDatabase } from "./databases.js";
 import { NocollideError } from "./errors.js";
 
 export interface SlotEntry {
@@ -9,6 +10,7 @@ export interface SlotEntry {
   root: string;
   ports: Record<string, number>;
   claimedAt: string;
+  databases?: CreatedDatabase[];
 }
 
 export interface Registry {

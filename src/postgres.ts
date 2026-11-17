@@ -4,11 +4,17 @@ import { NocollideError } from "./errors.js";
 export type PsqlRunner = (url: string, sql: string) => Promise<string>;
 
 function defaultRunner(url: string, sql: string): Promise<string> {
+  const parsed = new URL(url);
+  const env = { ...process.env };
+  if (parsed.password) {
+    env.PGPASSWORD = decodeURIComponent(parsed.password);
+    parsed.password = "";
+  }
   return new Promise((resolve, reject) => {
     execFile(
       "psql",
-      [url, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A", "-c", sql],
-      { encoding: "utf8", windowsHide: true },
+      [parsed.toString(), "-w", "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A", "-c", sql],
+      { encoding: "utf8", windowsHide: true, env },
       (error, stdout, stderr) => {
         if (!error) return resolve(stdout.trim());
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

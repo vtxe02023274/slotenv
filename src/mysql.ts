@@ -59,6 +59,8 @@ function copy(from: string, to: string): Promise<void> {
     load.on("error", (error: NodeJS.ErrnoException) => fail(error.code === "ENOENT" ? missing("mysql") : new NocollideError(error.message)));
     dump.stderr.on("data", (chunk) => (errors += chunk));
     load.stderr.on("data", (chunk) => (errors += chunk));
+    load.stdin.on("error", () => undefined);
+    dump.stdout.on("error", () => undefined);
     dump.stdout.pipe(load.stdin);
     const done = (name: string) => (code: number | null) => {
       if (code !== 0) return fail(new NocollideError(`${name} failed: ${errors.trim() || `exit code ${code}`}`));

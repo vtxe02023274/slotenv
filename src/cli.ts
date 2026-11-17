@@ -3,8 +3,11 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { down, gc, init, list, up } from "./core.js";
+import { doctor } from "./doctor.js";
 import { NocollideError } from "./errors.js";
 import { isIgnored } from "./git.js";
+import { installHook, uninstallHook } from "./hook.js";
+import { formatVars, parseShell } from "./shell.js";
 
 const version = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string })
   .version;
@@ -16,10 +19,14 @@ Usage:
   nocollide init [--force]        Create nocollide.json for this repository
   nocollide up [--force]          Claim a slot for this worktree and write its env file
   nocollide down [--keep-data]    Release the slot of this worktree and drop its databases
-  nocollide ls                    List the slots of this repository
+  nocollide ls [--json]           List the slots of this repository
   nocollide gc [--keep-data]      Release slots whose worktree was deleted
   nocollide port <NAME>           Print one port of this worktree
   nocollide run -- <command...>   Run a command with the slot variables set
+  nocollide env [--shell <name>]  Print the slot variables: sh, powershell, cmd or json
+  nocollide hook install          Run "nocollide up" automatically for new worktrees
+  nocollide hook uninstall        Remove that hook
+  nocollide doctor                Check the setup and say what to fix
 
 Options:
   -h, --help      Show this help
@@ -69,7 +76,16 @@ function runCommand(command: string[], vars: Record<string, string>): Promise<nu
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
-  const flags = new Set(rest.filter((arg) => arg.startsWith("-")));
+  const separator = rest.indexOf("--");
+  const own = separator >= 0 ? rest.slice(0, separator) : rest;
+  const flags = new Set(own.filter((arg) => arg.startsWith("-")).map((arg) => arg.split("=")[0]!));
+  const option = (name: string): string | undefined => {
+    const inline = own.find((arg) => arg.startsWith(`${name}=`));
+    if (inline) return inline.slice(name.length + 1);
+    const index = own.indexOf(name);
+    return index >= 0 ? own[index + 1] : undefined;
+  };
+  const positional = own.filter((arg, index) => !arg.startsWith("-") && own[index - 1] !== "--shell");
   const force = flags.has("--force") || flags.has("-f");
   const keepData = flags.has("--keep-data");
   const cwd = process.cwd();
@@ -98,6 +114,10 @@ async function main(argv: string[]): Promise<number> {
         );
       }
       console.log(`Wrote ${relative(cwd, file) || file}.`);
+      const framework = detection.framework;
+      if (framework && !framework.readsPort && "PORT" in config.ports) {
+        console.log(`${framework.name} does not read PORT by itself: ${framework.hint}, or use "nocollide run".`);
+      }
       if (detection.hardcoded.length > 0) {
         console.log(
           `These scripts hard-code a port: ${detection.hardcoded.join(", ")}. Make them read the variable instead, or start them with "nocollide run -- <command>".`,
@@ -130,6 +150,19 @@ async function main(argv: string[]): Promise<number> {
     case "ls":
     case "list": {
       const rows = await list(cwd);
+      if (flags.has("--json")) {
+        const data = rows.map((row) => ({
+          slot: row.slot,
+          worktree: row.root,
+          ports: row.ports,
+          databases: (row.databases ?? []).map((db) => redact(db.url)),
+          current: row.current,
+          exists: row.exists,
+          claimedAt: row.claimedAt,
+        }));
+        process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+        return 0;
+      }
       if (rows.length === 0) {
         console.log('No slots claimed in this repository. Run "nocollide up" in a worktree.');
         return 0;
@@ -151,7 +184,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "port": {
-      const name = rest.find((arg) => !arg.startsWith("-"));
+      const name = positional[0];
       if (!name) throw new NocollideError("Usage: nocollide port <NAME>");
       const claim = await up(cwd);
       const port = claim.ports[name];
@@ -162,10 +195,37 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "run": {
-      const separator = rest.indexOf("--");
       const commandLine = separator >= 0 ? rest.slice(separator + 1) : rest;
       const claim = await up(cwd);
       return runCommand(commandLine, claim.vars);
+    }
+    case "env": {
+      const shell = flags.has("--json") ? "json" : parseShell(option("--shell"));
+      const claim = await up(cwd);
+      process.stdout.write(formatVars(claim.vars, shell));
+      return 0;
+    }
+    case "hook": {
+      const action = positional[0];
+      if (action === "install") {
+        const result = installHook(cwd);
+        const how = result.updated ? "Updated" : result.appended ? "Added nocollide to the existing" : "Installed";
+        console.log(`${how} ${result.file}. New worktrees now run "nocollide up" when git creates them.`);
+        return 0;
+      }
+      if (action === "uninstall") {
+        const result = uninstallHook(cwd);
+        if (!result.removed) console.log("The nocollide hook is not installed.");
+        else console.log(result.deleted ? `Removed ${result.file}.` : `Removed the nocollide part of ${result.file}.`);
+        return 0;
+      }
+      throw new NocollideError("Usage: nocollide hook install | nocollide hook uninstall");
+    }
+    case "doctor": {
+      const checks = await doctor(cwd);
+      const marks = { ok: "ok  ", warn: "warn", fail: "FAIL" } as const;
+      for (const check of checks) console.log(`${marks[check.level]}  ${check.message}`);
+      return checks.some((check) => check.level === "fail") ? 1 : 0;
     }
     default:
       throw new NocollideError(`Unknown command "${command}". Run "nocollide --help".`);

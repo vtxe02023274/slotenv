@@ -15,7 +15,7 @@
 
 - [x] Postgres: per-slot database cloned from a template database
 - [x] SQLite: per-slot file copy
-- [ ] MySQL
+- [x] MySQL and MariaDB
 - [x] Redis: DB index per slot
 - [x] Docker Compose: per-slot project name
 - [x] `init` detects databases and Compose files

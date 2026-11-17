@@ -8,7 +8,7 @@
 
 ![Three agents start the same dev server. Without nocollide two of them fail with EADDRINUSE. With nocollide they run on ports 3000, 3010 and 3020.](docs/demo.gif)
 
-> Status: v0.2 handles ports, `.env` files, Postgres, SQLite, Redis and Docker Compose. MySQL is next.
+> Status: v0.3 handles ports, `.env` files, Postgres, MySQL, SQLite, Redis and Docker Compose, and can set up new worktrees by itself through a git hook.
 
 ## Install
 
@@ -95,10 +95,11 @@ Each entry in `databases` is an env variable. Slot 0 keeps the value as written;
 | kind | slot 2 gets | on `up` | on `down` |
 | --- | --- | --- | --- |
 | `postgres` | `app_dev_s2` | created with `CREATE DATABASE ... TEMPLATE app_dev`, so schema and seed data come along | dropped |
+| `mysql` | `app_dev_s2` | created and filled with `mysqldump app_dev \| mysql app_dev_s2` | dropped |
 | `sqlite` | its own copy of `path` inside the worktree | copied from the main worktree if missing | kept with the worktree |
 | `redis` | DB index `base + 2` | nothing to create | nothing to drop |
 
-- Postgres uses the `psql` client, which must be on your `PATH`. Set `"template": false` to start each slot with an empty database instead.
+- Postgres uses the `psql` client and MySQL uses `mysql` and `mysqldump`; they must be on your `PATH`. `mysql://` and `mariadb://` URLs both work. Set `"template": false` to start each slot with an empty database instead.
 - Copying a template needs nobody connected to it. If the main dev server is running, nocollide tells you to stop it or to use `"template": false`.
 - `down --keep-data` and `gc --keep-data` keep the databases. nocollide only drops databases it created itself.
 

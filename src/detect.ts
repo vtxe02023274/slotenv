@@ -15,6 +15,54 @@ export interface Detection {
   hardcoded: string[];
   skipped: string[];
   detected: boolean;
+  framework?: Framework;
+}
+
+export interface Framework {
+  name: string;
+  port: number;
+  readsPort: boolean;
+  hint: string;
+}
+
+const NODE_FRAMEWORKS: Array<[string, Framework]> = [
+  ["next", { name: "Next.js", port: 3000, readsPort: true, hint: "" }],
+  ["nuxt", { name: "Nuxt", port: 3000, readsPort: true, hint: "" }],
+  ["react-scripts", { name: "Create React App", port: 3000, readsPort: true, hint: "" }],
+  ["@angular/core", { name: "Angular", port: 4200, readsPort: false, hint: 'start it with "ng serve --port $PORT"' }],
+  ["astro", { name: "Astro", port: 4321, readsPort: false, hint: 'start it with "astro dev --port $PORT"' }],
+  ["@sveltejs/kit", { name: "SvelteKit", port: 5173, readsPort: false, hint: 'start it with "vite dev --port $PORT"' }],
+  ["vite", { name: "Vite", port: 5173, readsPort: false, hint: 'start it with "vite --port $PORT", or set server.port to Number(process.env.PORT) in vite.config' }],
+];
+
+function readText(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+export function detectFramework(root: string): Framework | undefined {
+  const pkg = readText(join(root, "package.json"));
+  if (pkg) {
+    try {
+      const parsed = JSON.parse(pkg) as { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> };
+      const deps = { ...parsed.dependencies, ...parsed.devDependencies };
+      for (const [dep, framework] of NODE_FRAMEWORKS) if (dep in deps) return framework;
+    } catch {}
+  }
+  if (existsSync(join(root, "manage.py"))) {
+    return { name: "Django", port: 8000, readsPort: false, hint: 'start it with "python manage.py runserver $PORT"' };
+  }
+  const python = readText(join(root, "requirements.txt")) + readText(join(root, "pyproject.toml"));
+  if (/^\s*["']?flask\b/im.test(python)) {
+    return { name: "Flask", port: 5000, readsPort: false, hint: 'start it with "flask run --port $PORT"' };
+  }
+  if (/^\s*gem\s+["']rails["']/m.test(readText(join(root, "Gemfile")))) {
+    return { name: "Rails", port: 3000, readsPort: true, hint: "" };
+  }
+  return undefined;
 }
 
 export const SERVICE_PORTS = new Set([5432, 3306, 6379, 27017, 5672, 9200, 9092, 11211, 1025, 25, 587]);
@@ -129,6 +177,8 @@ export function detectPorts(root: string): Detection {
     }
   }
 
+  const framework = detectFramework(root);
+  if (Object.keys(ports).length === 0 && framework) ports.PORT = framework.port;
   const detected = Object.keys(ports).length > 0;
   const result: Detection = {
     ports: detected ? ports : { ...DEFAULT_PORTS },
@@ -139,5 +189,6 @@ export function detectPorts(root: string): Detection {
     detected,
   };
   if (envFrom) result.envFrom = envFrom;
+  if (framework) result.framework = framework;
   return result;
 }

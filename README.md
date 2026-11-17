@@ -41,7 +41,9 @@ main worktree   slot 0   WEB_PORT=3000   db app_dev      redis /0   compose shop
 
 - The main worktree always keeps slot 0, so your normal setup does not change.
 - Other worktrees get the lowest free slot. A slot is skipped when one of its ports is already in use.
+- Slot numbers are unique across all your repositories, so two projects with the same ports or database names never collide.
 - Slots live in `~/.nocollide/slots.json` behind a lock, so ten agents running `up` at the same moment still get ten different slots.
+- `git worktree move` keeps the slot and its databases.
 
 ## Usage
 
@@ -86,7 +88,7 @@ DATABASE_URL=postgres://localhost/app_s${NOCOLLIDE_SLOT}
 PUBLIC_URL=http://localhost:${WEB_PORT}
 ```
 
-nocollide never overwrites an env file it did not write. Move your own values into the template, or pass `--force`.
+nocollide never overwrites an env file it did not write. Move your own values into the template, or pass `--force`. `run`, `env` and `port` never write the env file, so they also work next to a hand-written `.env.local`.
 
 ### Databases
 
@@ -101,7 +103,9 @@ Each entry in `databases` is an env variable. Slot 0 keeps the value as written;
 
 - Postgres uses the `psql` client and MySQL uses `mysql` and `mysqldump`; they must be on your `PATH`. `mysql://` and `mariadb://` URLs both work. Set `"template": false` to start each slot with an empty database instead.
 - Copying a template needs nobody connected to it. If the main dev server is running, nocollide tells you to stop it or to use `"template": false`.
-- `down --keep-data` and `gc --keep-data` keep the databases. nocollide only drops databases it created itself.
+- `down --keep-data` and `gc --keep-data` keep the databases. nocollide only drops databases it created itself; a database that already existed is used as it is and left alone.
+- If a drop fails, the slot stays claimed so `nocollide down` can be run again.
+- Passwords are passed to `psql` and `mysql` through `PGPASSWORD` and `MYSQL_PWD`, never on the command line, and are hidden in every message.
 
 ### Docker Compose
 
@@ -125,7 +129,7 @@ nocollide run -- npm run dev
 nocollide hook install
 ```
 
-This adds a git `post-checkout` hook, so `git worktree add` (and every tool built on it) claims a slot and writes `.env.local` before the agent even starts. An existing hook is kept: nocollide adds a marked block and `nocollide hook uninstall` removes only that block. `core.hooksPath` setups such as Husky are supported.
+This adds a git `post-checkout` hook, so `git worktree add` (and every tool built on it) claims a slot and writes `.env.local` before the agent even starts. An existing hook is kept: nocollide adds a marked block and `nocollide hook uninstall` removes only that block. `core.hooksPath` is respected, and with Husky v9 the hook goes into `.husky/post-checkout`.
 
 ### Load the variables in a shell
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+New:
+
+- `nocollide hook install`: new worktrees claim a slot by themselves (#23)
+- `nocollide env` for sh, PowerShell, cmd and JSON, and `ls --json` (#24)
+- Framework default ports in `init`: Vite, Next.js, Nuxt, Astro, Angular, SvelteKit, Django, Flask, Rails (#25)
+- `nocollide doctor` (#26)
+- MySQL and MariaDB: one database per slot (#27)
+
+Fixes:
+
+- Slot numbers are unique across repositories, so two projects never share ports or database names
+- A database that already existed is never dropped
+- Each created database is recorded right away, so a later failure cannot leak it
+- A failed drop keeps the slot so `down` can be retried; `gc` does the same
+- `git worktree move` keeps the slot; `gc` no longer treats a moved worktree as deleted
+- Database passwords go through environment variables and are hidden in all messages
+- The hook block runs first in an existing hook, works with Husky v9 and with SHA-256 repositories
+- Parallel `up` calls in one worktree wait for each other while databases are being created
+- `run`, `env` and `port` no longer write or require the env file
+- `--` is only a separator when it comes right after `run`
+- `run` forwards SIGTERM and SIGHUP to the command
+- A lock left by a crashed process is taken over at once
+- SQLite `-wal` and `-shm` files are copied with the database
+
 ## 0.2.0
 
 - `databases` in `nocollide.json`: one Postgres database, SQLite file or Redis DB index per slot (#16, #17, #18, #19)

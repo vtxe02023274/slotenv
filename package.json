@@ -1,7 +1,7 @@
 {
   "name": "nocollide",
-  "version": "0.2.0",
-  "description": "Run parallel coding agents without collisions: each git worktree gets its own ports, .env, Postgres, SQLite or Redis database and Compose project. No containers.",
+  "version": "0.3.0",
+  "description": "Run parallel coding agents without collisions: each git worktree gets its own ports, .env, Postgres, MySQL, SQLite or Redis database and Compose project. No containers.",
   "type": "module",
   "bin": {
     "nocollide": "dist/src/cli.js"

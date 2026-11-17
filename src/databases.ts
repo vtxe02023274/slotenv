@@ -1,14 +1,15 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { ComposeConfig, DatabaseConfig } from "./config.js";
-import { createMysqlDatabase, mysqlDatabaseExists } from "./mysql.js";
-import { createDatabase, databaseExists, databaseName, withDatabase } from "./postgres.js";
+import { createMysqlDatabase, dropMysqlDatabase, mysqlDatabaseExists } from "./mysql.js";
+import { createDatabase, databaseExists, databaseName, dropDatabase, withDatabase } from "./postgres.js";
 
 export const REDIS_DEFAULT_DATABASES = 16;
 
 export interface CreatedDatabase {
   kind: "postgres" | "mysql";
   url: string;
+  ready?: boolean;
 }
 
 export interface Provisioned {
@@ -51,27 +52,33 @@ export async function provisionDatabases(
   slot: number,
   root: string,
   mainRoot: string | undefined,
-  owned: Set<string>,
-  onCreated: (db: CreatedDatabase) => Promise<void>,
+  owned: () => Promise<Map<string, CreatedDatabase>>,
+  record: (db: CreatedDatabase) => Promise<void>,
 ): Promise<Provisioned> {
   const result: Provisioned = { created: [], copied: [], warnings: [] };
   if (slot === 0 || !databases) return result;
+  const known = await owned();
   for (const [name, db] of Object.entries(databases)) {
     if (db.kind === "postgres" || db.kind === "mysql") {
       const url = slotDatabaseValue(db, slot);
       const exists = db.kind === "postgres" ? await databaseExists(url) : await mysqlDatabaseExists(url);
+      const mine = known.get(url);
       if (exists) {
-        if (!owned.has(url)) {
+        if (!mine) {
           result.warnings.push(
             `${name}: database ${databaseName(url)} already existed, so this slot uses it as it is and nocollide will never drop it.`,
           );
+          continue;
         }
-        continue;
+        if (mine.ready !== false) continue;
+        result.warnings.push(`${name}: the last copy into ${databaseName(url)} did not finish, so it is made again.`);
+        await (db.kind === "postgres" ? dropDatabase(url) : dropMysqlDatabase(url));
       }
+      await record({ kind: db.kind, url, ready: false });
       const template = db.template ? databaseName(db.url) : undefined;
       await (db.kind === "postgres" ? createDatabase(url, template) : createMysqlDatabase(url, template));
-      const created: CreatedDatabase = { kind: db.kind, url };
-      await onCreated(created);
+      const created: CreatedDatabase = { kind: db.kind, url, ready: true };
+      await record(created);
       result.created.push(created);
     } else if (db.kind === "sqlite") {
       const file = sqliteFile(db.path);

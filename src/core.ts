@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE, DEFAULT_STEP, loadConfig, type Config, type EnvConfig } from "./config.js";
@@ -136,15 +136,45 @@ function mainRootOf(worktree: Worktree): string {
   return worktree.isMain ? worktree.root : (mainWorktreeRoot(worktree.root) ?? worktree.root);
 }
 
+const MARKER_FILE = "nocollide-slot";
+
+function readMarker(gitDir: string): string | undefined {
+  try {
+    return readFileSync(join(gitDir, MARKER_FILE), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function writeMarker(worktree: Worktree, entry: SlotEntry): void {
+  if (worktree.isMain) return;
+  entry.token ??= randomBytes(8).toString("hex");
+  if (readMarker(worktree.gitDir) === entry.token) return;
+  try {
+    writeFileSync(join(worktree.gitDir, MARKER_FILE), `${entry.token}\n`);
+  } catch {}
+}
+
+function movedHere(entry: SlotEntry): boolean {
+  return entry.gitDir !== undefined && entry.token !== undefined && readMarker(entry.gitDir) === entry.token;
+}
+
 export function isAlive(entry: SlotEntry): boolean {
   if (existsSync(entry.root)) return true;
-  if (!entry.gitDir) return false;
+  if (!entry.gitDir || !movedHere(entry)) return false;
   try {
     const target = readFileSync(join(entry.gitDir, "gitdir"), "utf8").trim();
     return target !== "" && existsSync(target);
   } catch {
     return false;
   }
+}
+
+function slotUsedElsewhere(registry: Registry, repo: string, slot: number): boolean {
+  if (slot === 0) return false;
+  return Object.entries(registry.repos).some(
+    ([other, slots]) => other !== repo && Object.values(slots).some((entry) => entry.slot === slot),
+  );
 }
 
 function takenSlots(registry: Registry): Set<number> {
@@ -206,12 +236,13 @@ export async function up(cwd: string, options: { force?: boolean; writeEnv?: boo
   assertEnvWritable(worktree.root, envConfig, options.force ?? false);
   const key = keys(worktree);
 
-  const { slot, created, owned } = await withRegistry(async (registry) => {
+  const { slot, created } = await withRegistry(async (registry) => {
     const slots = (registry.repos[key.repo] ??= {});
     let existing = slots[key.worktree];
     if (!existing) {
       const moved = Object.entries(slots).find(
-        ([, entry]) => entry.gitDir !== undefined && pathKey(entry.gitDir) === key.gitDir && !existsSync(entry.root),
+        ([, entry]) =>
+          entry.gitDir !== undefined && pathKey(entry.gitDir) === key.gitDir && !existsSync(entry.root) && movedHere(entry),
       );
       if (moved) {
         existing = moved[1];
@@ -219,12 +250,17 @@ export async function up(cwd: string, options: { force?: boolean; writeEnv?: boo
         slots[key.worktree] = existing;
       }
     }
-    const owned = new Set((existing?.databases ?? []).map((db) => db.url));
-    if (existing && (!worktree.isMain || existing.slot === 0) && fitsPortRange(config, existing.slot)) {
+    if (
+      existing &&
+      (!worktree.isMain || existing.slot === 0) &&
+      fitsPortRange(config, existing.slot) &&
+      !slotUsedElsewhere(registry, key.repo, existing.slot)
+    ) {
       existing.root = worktree.root;
       existing.gitDir = worktree.gitDir;
       existing.ports = slotPorts(config, existing.slot);
-      return { slot: existing.slot, created: false, owned };
+      writeMarker(worktree, existing);
+      return { slot: existing.slot, created: false };
     }
     const carried = existing?.databases;
     delete slots[key.worktree];
@@ -243,8 +279,9 @@ export async function up(cwd: string, options: { force?: boolean; writeEnv?: boo
       claimedAt: new Date().toISOString(),
     };
     if (carried?.length) entry.databases = carried;
+    writeMarker(worktree, entry);
     slots[key.worktree] = entry;
-    return { slot: chosen, created: true, owned };
+    return { slot: chosen, created: true };
   });
 
   const mainRoot = mainRootOf(worktree);
@@ -252,8 +289,12 @@ export async function up(cwd: string, options: { force?: boolean; writeEnv?: boo
     withRegistry((registry) => {
       const entry = registry.repos[key.repo]?.[key.worktree];
       if (!entry) return;
-      if (!(entry.databases ?? []).some((known) => known.url === db.url)) entry.databases = [...(entry.databases ?? []), db];
+      entry.databases = [...(entry.databases ?? []).filter((known) => known.url !== db.url), db];
     });
+  const owned = () =>
+    withRegistry(
+      (registry) => new Map((registry.repos[key.repo]?.[key.worktree]?.databases ?? []).map((db) => [db.url, db] as const)),
+    );
   const lockName = `provision-${createHash("sha1").update(key.worktree).digest("hex").slice(0, 16)}`;
   const provisioned = config.databases
     ? await withLock(lockName, PROVISION_TIMEOUT_MS, "another nocollide command that is setting up databases for this worktree", () =>

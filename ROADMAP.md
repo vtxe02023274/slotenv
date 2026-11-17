@@ -13,11 +13,12 @@
 
 ## v0.2 - databases and services
 
-- [ ] Postgres: per-slot database cloned from a template database
-- [ ] SQLite: per-slot file copy
+- [x] Postgres: per-slot database cloned from a template database
+- [x] SQLite: per-slot file copy
 - [ ] MySQL
-- [ ] Redis: DB index per slot
-- [ ] Docker Compose: per-slot project name and port overrides
+- [x] Redis: DB index per slot
+- [x] Docker Compose: per-slot project name
+- [x] `init` detects databases and Compose files
 
 ## v0.3 - agent integrations
 

@@ -8,7 +8,7 @@
 
 ![Three agents start the same dev server. Without nocollide two of them fail with EADDRINUSE. With nocollide they run on ports 3000, 3010 and 3020.](docs/demo.gif)
 
-> Status: v0.1 handles ports and `.env` files. Per-slot databases and Docker Compose land in v0.2.
+> Status: v0.2 handles ports, `.env` files, Postgres, SQLite, Redis and Docker Compose. MySQL is next.
 
 ## Install
 
@@ -34,9 +34,9 @@ Container-per-agent tools solve this, but they are heavy, slow to start, and rep
 Each worktree gets a **slot number**. Everything else is derived from it.
 
 ```text
-main worktree      slot 0   WEB_PORT=3000   API_PORT=4000
-../feat-login      slot 1   WEB_PORT=3010   API_PORT=4010
-../fix-cart        slot 2   WEB_PORT=3020   API_PORT=4020
+main worktree   slot 0   WEB_PORT=3000   db app_dev      redis /0   compose shop
+../feat-login   slot 1   WEB_PORT=3010   db app_dev_s1   redis /1   compose shop-s1
+../fix-cart     slot 2   WEB_PORT=3020   db app_dev_s2   redis /2   compose shop-s2
 ```
 
 - The main worktree always keeps slot 0, so your normal setup does not change.
@@ -51,19 +51,26 @@ nocollide up              # in a worktree: claims a slot and writes .env.local
 nocollide run -- npm run dev   # runs a command with the slot variables set
 nocollide port WEB_PORT   # prints one port, handy in scripts
 nocollide ls              # every slot of this repository
-nocollide down            # releases the slot and removes .env.local
-nocollide gc              # releases slots whose worktree was deleted
+nocollide down            # releases the slot, drops its databases, removes .env.local
+nocollide gc              # the same for worktrees that were deleted
 ```
 
-`init` reads ports from `.env.example` (`WEB_PORT=3000`) and from `package.json` scripts (`--port 3000`, `-p 3000`, `PORT=3000`) and writes:
+`init` reads ports from `.env.example` (`WEB_PORT=3000`) and from `package.json` scripts (`--port 3000`, `-p 3000`, `PORT=3000`), finds database URLs in `.env.example`, notices a Compose file, and writes:
 
 ```json
 {
   "ports": { "WEB_PORT": 3000, "API_PORT": 4000 },
   "step": 10,
-  "env": { "from": ".env.example", "to": ".env.local" }
+  "env": { "from": ".env.example", "to": ".env.local" },
+  "databases": {
+    "DATABASE_URL": { "kind": "postgres", "url": "postgres://postgres:postgres@localhost:5432/app_dev" },
+    "REDIS_URL": { "kind": "redis", "url": "redis://localhost:6379/0" }
+  },
+  "compose": true
 }
 ```
+
+Ports of shared services such as `DB_PORT=5432` or `REDIS_PORT=6379` are left out, because every slot should keep talking to the same server. With a Compose file they are kept, because each slot then runs its own containers.
 
 Commit `nocollide.json`. Until you do, new worktrees fall back to the copy in the main worktree.
 
@@ -78,6 +85,28 @@ PUBLIC_URL=http://localhost:${WEB_PORT}
 
 nocollide never overwrites an env file it did not write. Move your own values into the template, or pass `--force`.
 
+### Databases
+
+Each entry in `databases` is an env variable. Slot 0 keeps the value as written; every other slot gets its own database:
+
+| kind | slot 2 gets | on `up` | on `down` |
+| --- | --- | --- | --- |
+| `postgres` | `app_dev_s2` | created with `CREATE DATABASE ... TEMPLATE app_dev`, so schema and seed data come along | dropped |
+| `sqlite` | its own copy of `path` inside the worktree | copied from the main worktree if missing | kept with the worktree |
+| `redis` | DB index `base + 2` | nothing to create | nothing to drop |
+
+- Postgres uses the `psql` client, which must be on your `PATH`. Set `"template": false` to start each slot with an empty database instead.
+- Copying a template needs nobody connected to it. If the main dev server is running, nocollide tells you to stop it or to use `"template": false`.
+- `down --keep-data` and `gc --keep-data` keep the databases. nocollide only drops databases it created itself.
+
+### Docker Compose
+
+With `"compose": true`, every slot gets `COMPOSE_PROJECT_NAME` (`shop`, `shop-s1`, `shop-s2`, ...), so containers, networks and volumes stay apart and `docker compose down` in one worktree leaves the others alone. Run Compose through nocollide so it sees the slot ports too:
+
+```bash
+nocollide run -- docker compose up
+```
+
 ### Make your dev server use the port
 
 Most frameworks read `PORT` or a variable you pass in config. If a script hard-codes a port, either make it read the variable, or start it through nocollide:
@@ -91,7 +120,7 @@ nocollide run -- npm run dev
 Add one line to `AGENTS.md` or your agent's instructions file:
 
 ```text
-Before starting a dev server or tests in a worktree, run `npx nocollide up` and use the ports in .env.local.
+Before starting a dev server or tests in a worktree, run `npx nocollide up` and use the ports and database URLs in .env.local.
 ```
 
 ## Non-goals

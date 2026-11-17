@@ -15,7 +15,7 @@ test("hook install writes, updates and uninstalls a marked block", (t) => {
   assert.equal(first.file, hookPath(box.repo));
   assert.equal(readFileSync(first.file, "utf8"), `#!/bin/sh\n${HOOK_BLOCK}\n`);
   assert.equal(installHook(box.repo).updated, true);
-  assert.equal(readFileSync(first.file, "utf8").split(">>> nocollide >>>").length, 2);
+  assert.equal(readFileSync(first.file, "utf8").split(">>> slotenv >>>").length, 2);
   assert.deepEqual(uninstallHook(box.repo), { file: first.file, removed: true, deleted: true });
   assert.equal(existsSync(first.file), false);
   assert.equal(uninstallHook(box.repo).removed, false);
@@ -42,18 +42,18 @@ test("hook install keeps an existing hook and respects core.hooksPath", (t) => {
 
 test("with the hook, git worktree add claims a slot by itself", async (t) => {
   const base = await freeBase();
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }), ".gitignore": ".env.local\n" });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: base }), ".gitignore": ".env.local\n" });
   t.after(box.cleanup);
   const bin = join(box.dir, "bin");
   mkdirSync(bin);
-  const shim = join(bin, "nocollide");
+  const shim = join(bin, "slotenv");
   writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath.replace(/\\/g, "/")}" "${CLI.replace(/\\/g, "/")}" "$@"\n`);
   chmodSync(shim, 0o755);
   installHook(box.repo);
   const path = join(box.dir, "auto");
   execFileSync("git", ["worktree", "add", "-q", "-b", "auto", path], {
     cwd: box.repo,
-    env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, NOCOLLIDE_HOME: box.home },
+    env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, SLOTENV_HOME: box.home },
     stdio: "ignore",
   });
   const env = readFileSync(join(path, ".env.local"), "utf8");
@@ -73,12 +73,12 @@ test("env prints variables for each shell", () => {
 
 test("env --json and ls --json from the CLI", async (t) => {
   const base = await freeBase();
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: base }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "json");
   const env = await runCli(worktree, ["env", "--json"], box.home);
   assert.equal(env.code, 0, env.stderr);
-  assert.deepEqual(JSON.parse(env.stdout), { WEB_PORT: String(base + 10), NOCOLLIDE_SLOT: "1" });
+  assert.deepEqual(JSON.parse(env.stdout), { WEB_PORT: String(base + 10), SLOTENV_SLOT: "1" });
   const sh = await runCli(worktree, ["env", "--shell", "sh"], box.home);
   assert.match(sh.stdout, new RegExp(`^export WEB_PORT='${base + 10}'$`, "m"));
   const ls = await runCli(worktree, ["ls", "--json"], box.home);
@@ -89,9 +89,9 @@ test("env --json and ls --json from the CLI", async (t) => {
   assert.deepEqual(rows[0].ports, { WEB_PORT: base + 10 });
 });
 
-test("flags after -- belong to the command, not to nocollide", async (t) => {
+test("flags after -- belong to the command, not to slotenv", async (t) => {
   const box = sandbox({
-    "nocollide.json": config({ WEB_PORT: await freeBase() }),
+    "slotenv.json": config({ WEB_PORT: await freeBase() }),
     "args.js": "console.log(process.argv.slice(2).join(' '))\n",
   });
   t.after(box.cleanup);
@@ -129,15 +129,15 @@ test("doctor reports what to fix", async (t) => {
   t.after(empty.cleanup);
   const failing = await runCli(empty.repo, ["doctor"], empty.home);
   assert.equal(failing.code, 1);
-  assert.match(failing.stdout, /FAIL {2}No nocollide\.json/);
+  assert.match(failing.stdout, /FAIL {2}No slotenv\.json/);
 
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: await freeBase() }), ".gitignore": ".env.local\n" });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: await freeBase() }), ".gitignore": ".env.local\n" });
   t.after(box.cleanup);
   installHook(box.repo);
   await runCli(box.repo, ["up"], box.home);
   const result = await runCli(box.repo, ["doctor"], box.home);
   assert.equal(result.code, 0, result.stdout);
-  assert.match(result.stdout, /ok +nocollide\.json is valid/);
+  assert.match(result.stdout, /ok +slotenv\.json is valid/);
   assert.match(result.stdout, /ok +\.env\.local is ignored by git/);
   assert.match(result.stdout, /ok +post-checkout hook/);
   assert.match(result.stdout, /ok +This worktree has slot 0/);

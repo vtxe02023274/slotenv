@@ -77,7 +77,7 @@ test("init detects databases, Compose and leaves service ports alone", (t) => {
       "DATABASE_URL=postgres://postgres:postgres@localhost:5432/shop",
       "REDIS_URL=redis://localhost:6379/0",
       "SQLITE_PATH=file:./data/dev.db",
-      "SLOT_DB=postgres://localhost/app_s${NOCOLLIDE_SLOT}",
+      "SLOT_DB=postgres://localhost/app_s${SLOTENV_SLOT}",
       "API_URL=https://example.com",
       "",
     ].join("\n"),
@@ -101,7 +101,7 @@ test("postgres: each slot gets a database cloned from the template and down drop
   const pg = fakePostgres();
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: "postgres://me:pw@localhost:5432/app_dev" } } }),
+    "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: "postgres://me:pw@localhost:5432/app_dev" } } }),
   });
   t.after(box.cleanup);
   const main = await up(box.repo);
@@ -128,7 +128,7 @@ test("postgres: template false, --keep-data and gc", async (t) => {
   const pg = fakePostgres([]);
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": await dbConfig({
+    "slotenv.json": await dbConfig({
       databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app", template: false } },
     }),
   });
@@ -150,7 +150,7 @@ test("postgres: template false, --keep-data and gc", async (t) => {
 
 test("sqlite: the main worktree file is copied into new worktrees", async (t) => {
   const box = sandbox({
-    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "sqlite", path: "file:./data/dev.db" } } }),
+    "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "sqlite", path: "file:./data/dev.db" } } }),
     ".gitignore": "data/\n.env.local\n",
   });
   t.after(box.cleanup);
@@ -169,7 +169,7 @@ test("sqlite: the main worktree file is copied into new worktrees", async (t) =>
 
 test("redis and compose variables reach the env file", async (t) => {
   const box = sandbox({
-    "nocollide.json": await dbConfig({ databases: { REDIS_URL: { kind: "redis", url: "redis://localhost:6379/14" } }, compose: true }),
+    "slotenv.json": await dbConfig({ databases: { REDIS_URL: { kind: "redis", url: "redis://localhost:6379/14" } }, compose: true }),
   });
   t.after(box.cleanup);
   const a = addWorktree(box, "a");
@@ -185,9 +185,9 @@ test("redis and compose variables reach the env file", async (t) => {
   assert.match(env, /^REDIS_URL=redis:\/\/localhost:6379\/16$/m);
 });
 
-const realPostgres = process.env.NOCOLLIDE_TEST_PG_URL;
+const realPostgres = process.env.SLOTENV_TEST_PG_URL;
 
-test("postgres against a real server", { skip: realPostgres ? false : "set NOCOLLIDE_TEST_PG_URL to run" }, async (t) => {
+test("postgres against a real server", { skip: realPostgres ? false : "set SLOTENV_TEST_PG_URL to run" }, async (t) => {
   const base = realPostgres!;
   const admin = new URL(base);
   admin.pathname = "/postgres";
@@ -200,7 +200,7 @@ test("postgres against a real server", { skip: realPostgres ? false : "set NOCOL
   psql(admin.toString(), `CREATE DATABASE "${name}"`);
   psql(base, "CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2)");
 
-  const box = sandbox({ "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: base } } }) });
+  const box = sandbox({ "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: base } } }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "pg");
   const claim = await up(worktree);
@@ -237,7 +237,7 @@ test("mysql: each slot gets a copy of the main database and down drops it", asyn
   });
   t.after(() => setMysqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root:pw@127.0.0.1:3306/shop" } } }),
+    "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root:pw@127.0.0.1:3306/shop" } } }),
   });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "my");
@@ -267,16 +267,16 @@ test("mysql: a failed copy removes the half-made database", async (t) => {
   });
   t.after(() => setMysqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root@localhost/shop" } } }),
+    "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root@localhost/shop" } } }),
   });
   t.after(box.cleanup);
   await assert.rejects(up(addWorktree(box, "broken")), /Unknown database/);
   assert.equal(databases.size, 0);
 });
 
-const realMysql = process.env.NOCOLLIDE_TEST_MYSQL_URL;
+const realMysql = process.env.SLOTENV_TEST_MYSQL_URL;
 
-test("mysql against a real server", { skip: realMysql ? false : "set NOCOLLIDE_TEST_MYSQL_URL to run" }, async (t) => {
+test("mysql against a real server", { skip: realMysql ? false : "set SLOTENV_TEST_MYSQL_URL to run" }, async (t) => {
   const base = realMysql!;
   const { execFileSync } = await import("node:child_process");
   const parsed = new URL(base);
@@ -292,7 +292,7 @@ test("mysql against a real server", { skip: realMysql ? false : "set NOCOLLIDE_T
   sql(`CREATE DATABASE \`${name}\``);
   sql("CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2);", name);
 
-  const box = sandbox({ "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: base } } }) });
+  const box = sandbox({ "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: base } } }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "mysql");
   await up(worktree);

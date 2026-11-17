@@ -4,7 +4,7 @@ import { addWorktree, freeBase, config, runCli, sandbox } from "./helpers.js";
 
 test("parallel up calls from many worktrees never share a slot", async (t) => {
   const base = await freeBase([0, 5000]);
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: base, API_PORT: base + 5000 }) });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: base, API_PORT: base + 5000 }) });
   t.after(box.cleanup);
   const worktrees = Array.from({ length: 6 }, (_, index) => addWorktree(box, `agent-${index}`));
   const results = await Promise.all(worktrees.map((path) => runCli(path, ["up"], box.home)));
@@ -18,10 +18,10 @@ test("parallel up calls from many worktrees never share a slot", async (t) => {
 
 test("run passes the slot variables to the command and port prints one port", async (t) => {
   const base = await freeBase();
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: base }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "runner");
-  const run = await runCli(worktree, ["run", "--", "node", "-p", "process.env.WEB_PORT+':'+process.env.NOCOLLIDE_SLOT"], box.home);
+  const run = await runCli(worktree, ["run", "--", "node", "-p", "process.env.WEB_PORT+':'+process.env.SLOTENV_SLOT"], box.home);
   assert.equal(run.code, 0, run.stderr);
   assert.equal(run.stdout.trim(), `${base + 10}:1`);
 
@@ -34,7 +34,7 @@ test("run passes the slot variables to the command and port prints one port", as
 
 test("up hides database passwords and keeps sqlite paths as written", async (t) => {
   const box = sandbox({
-    "nocollide.json": config(
+    "slotenv.json": config(
       { WEB_PORT: await freeBase() },
       {
         databases: {
@@ -57,7 +57,7 @@ test("errors are short and exit with code 1", async (t) => {
   t.after(box.cleanup);
   const result = await runCli(box.repo, ["up"], box.home);
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /^nocollide: No nocollide\.json/);
+  assert.match(result.stderr, /^slotenv: No slotenv\.json/);
   const unknown = await runCli(box.repo, ["fly"], box.home);
   assert.match(unknown.stderr, /Unknown command "fly"/);
   const help = await runCli(box.repo, ["--help"], box.home);

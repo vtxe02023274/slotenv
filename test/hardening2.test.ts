@@ -30,7 +30,7 @@ test("an interrupted copy is made again instead of being reused", async (t) => {
   });
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
   });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "crash");
@@ -48,7 +48,7 @@ test("an interrupted copy is made again instead of being reused", async (t) => {
 });
 
 test("removing a worktree and adding one with the same name starts a fresh slot", async (t) => {
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: await freeBase() }) });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: await freeBase() }) });
   t.after(box.cleanup);
   const first = addWorktree(box, "feat");
   await up(first);
@@ -67,11 +67,11 @@ test("removing a worktree and adding one with the same name starts a fresh slot"
 
 test("slot numbers shared by two repos since 0.2 are split again", async (t) => {
   const base = await freeBase();
-  const first = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
-  const second = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
+  const first = sandbox({ "slotenv.json": config({ WEB_PORT: base }) });
+  const second = sandbox({ "slotenv.json": config({ WEB_PORT: base }) });
   t.after(first.cleanup);
   t.after(second.cleanup);
-  process.env.NOCOLLIDE_HOME = first.home;
+  process.env.SLOTENV_HOME = first.home;
   const a = addWorktree(first, "a");
   const b = addWorktree(second, "b");
   await up(a);

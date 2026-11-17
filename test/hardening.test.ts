@@ -40,11 +40,11 @@ function memoryPostgres(existing: string[]) {
 
 test("worktrees of different repositories never share a slot", async (t) => {
   const base = await freeBase();
-  const first = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
-  const second = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
+  const first = sandbox({ "slotenv.json": config({ WEB_PORT: base }) });
+  const second = sandbox({ "slotenv.json": config({ WEB_PORT: base }) });
   t.after(first.cleanup);
   t.after(second.cleanup);
-  process.env.NOCOLLIDE_HOME = first.home;
+  process.env.SLOTENV_HOME = first.home;
   const a = await up(addWorktree(first, "a"));
   const b = await up(addWorktree(second, "b"));
   assert.equal(a.slot, 1);
@@ -55,7 +55,7 @@ test("a database that already existed is used but never dropped", async (t) => {
   const pg = memoryPostgres(["app", "app_s1"]);
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
   });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "shared");
@@ -77,7 +77,7 @@ test("a database created before a later failure is still recorded and dropped", 
   });
   t.after(() => setMysqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": config(
+    "slotenv.json": config(
       { WEB_PORT: await freeBase() },
       {
         databases: {
@@ -101,7 +101,7 @@ test("a failed drop keeps the slot so down can be retried, and hides passwords",
   const pg = memoryPostgres(["app"]);
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": config(
+    "slotenv.json": config(
       { WEB_PORT: await freeBase() },
       { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://me:hunter2@localhost/app" } } },
     ),
@@ -111,7 +111,7 @@ test("a failed drop keeps the slot so down can be retried, and hides passwords",
   await up(worktree);
   pg.failDrops("connection to postgres://me:hunter2@localhost/app_s1 failed");
   await assert.rejects(down(worktree), (error: Error) => {
-    assert.match(error.message, /run "nocollide down" again/);
+    assert.match(error.message, /run "slotenv down" again/);
     assert.doesNotMatch(error.message, /hunter2/);
     return true;
   });
@@ -126,7 +126,7 @@ test("a moved worktree keeps its slot and gc leaves it alone", async (t) => {
   const pg = memoryPostgres(["app"]);
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
   });
   t.after(box.cleanup);
   const before = addWorktree(box, "before");
@@ -162,7 +162,7 @@ test("the hook block fires for null object names of any length", () => {
 
 test("run, env and port leave a hand-written .env.local alone", async (t) => {
   const base = await freeBase();
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }), "args.js": "console.log(process.argv.slice(2).join(' '))\n" });
+  const box = sandbox({ "slotenv.json": config({ WEB_PORT: base }), "args.js": "console.log(process.argv.slice(2).join(' '))\n" });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "manual");
   writeFileSync(join(worktree, ".env.local"), "MINE=1\n");
@@ -190,7 +190,7 @@ test("a lock left by a dead process is taken over at once", async (t) => {
 
 test("sqlite WAL files are copied along with the database", async (t) => {
   const box = sandbox({
-    "nocollide.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "sqlite", path: "db/dev.sqlite3" } } }),
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "sqlite", path: "db/dev.sqlite3" } } }),
     ".gitignore": "db/\n",
   });
   t.after(box.cleanup);

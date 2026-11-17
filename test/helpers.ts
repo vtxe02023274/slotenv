@@ -42,7 +42,7 @@ export async function freeBase(offsets: number[] = [0]): Promise<number> {
 }
 
 export function sandbox(files: Record<string, string> = {}): Sandbox {
-  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "nocollide-")));
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "slotenv-")));
   const repo = join(dir, "repo");
   const home = join(dir, "home");
   mkdirSync(repo);
@@ -54,7 +54,7 @@ export function sandbox(files: Record<string, string> = {}): Sandbox {
   }
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "-m", "init"]);
-  process.env.NOCOLLIDE_HOME = home;
+  process.env.SLOTENV_HOME = home;
   return { dir, repo, home, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -81,7 +81,7 @@ export function runCli(
     execFile(
       process.execPath,
       [CLI, ...args],
-      { cwd, env: { ...process.env, NOCOLLIDE_HOME: home, FORCE_COLOR: "1" } },
+      { cwd, env: { ...process.env, SLOTENV_HOME: home, FORCE_COLOR: "1" } },
       (error, stdout, stderr) => {
         const code = error ? (typeof error.code === "number" ? error.code : 1) : 0;
         resolve({ code, stdout, stderr });

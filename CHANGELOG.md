@@ -1,13 +1,20 @@
 # Changelog
 
+## 0.3.1
+
+- Renamed from `nocollide` to `slotenv`: the command, the npm package and the repository
+- `slotenv.json` replaces `nocollide.json`; the old file is still read, and `doctor` asks you to rename it
+- `SLOTENV_HOME` and `SLOTENV_SLOT` replace `NOCOLLIDE_HOME` and `NOCOLLIDE_SLOT`; the old home variable, the `~/.nocollide` folder and `${NOCOLLIDE_SLOT}` placeholders still work
+- `hook install` replaces an old nocollide hook block, and `hook uninstall` removes either
+
 ## 0.3.0
 
 New:
 
-- `nocollide hook install`: new worktrees claim a slot by themselves (#23)
-- `nocollide env` for sh, PowerShell, cmd and JSON, and `ls --json` (#24)
+- `slotenv hook install`: new worktrees claim a slot by themselves (#23)
+- `slotenv env` for sh, PowerShell, cmd and JSON, and `ls --json` (#24)
 - Framework default ports in `init`: Vite, Next.js, Nuxt, Astro, Angular, SvelteKit, Django, Flask, Rails (#25)
-- `nocollide doctor` (#26)
+- `slotenv doctor` (#26)
 - MySQL and MariaDB: one database per slot (#27)
 
 Fixes:
@@ -32,14 +39,14 @@ Fixes:
 
 ## 0.2.0
 
-- `databases` in `nocollide.json`: one Postgres database, SQLite file or Redis DB index per slot (#16, #17, #18, #19)
+- `databases` in `slotenv.json`: one Postgres database, SQLite file or Redis DB index per slot (#16, #17, #18, #19)
 - Postgres databases are cloned from the main database, dropped on `down` and `gc`, kept with `--keep-data`
 - `compose`: one `COMPOSE_PROJECT_NAME` per slot (#20)
 - `init` detects database URLs and Compose files, and leaves shared service ports such as `DB_PORT` alone (#21)
 - `up` hides passwords when it prints database URLs
 - `ports` may be empty when `databases` or `compose` is set
 - `init` now detects a plain `PORT=` line in `.env.example` (#13)
-- `nocollide port` prints plain numbers when `FORCE_COLOR` is set (#10)
+- `slotenv port` prints plain numbers when `FORCE_COLOR` is set (#10)
 
 ## 0.1.0
 

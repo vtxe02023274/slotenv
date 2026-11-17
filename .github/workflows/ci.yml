@@ -37,7 +37,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      NOCOLLIDE_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/nocollide_ci
+      SLOTENV_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/slotenv_ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,7 +62,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      NOCOLLIDE_TEST_MYSQL_URL: mysql://root:root@127.0.0.1:3306/nocollide_ci
+      SLOTENV_TEST_MYSQL_URL: mysql://root:root@127.0.0.1:3306/slotenv_ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

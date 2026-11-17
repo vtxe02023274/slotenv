@@ -31,5 +31,5 @@
 
 ## Launch
 
-- [ ] 30-second demo GIF: three agents, three dev servers, three databases, no clashes
+- [x] 30-second demo GIF: three agents, three dev servers, three databases, no clashes
 - [ ] Show HN post and agent-tooling communities

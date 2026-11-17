@@ -6,7 +6,7 @@
 
 **Run 5 coding agents in parallel. Zero port clashes. Zero shared databases. No containers.**
 
-![Three agents start the same dev server. Without slotenv two of them fail with EADDRINUSE. With slotenv they run on ports 3000, 3010 and 3020.](docs/demo.gif)
+![slotenv init and hook install once. Then git worktree add gives each new worktree its own port and a copy of the Postgres database, and three agents run their dev servers on ports 3000, 3010 and 3020 against app_dev, app_dev_s1 and app_dev_s2.](docs/demo.gif)
 
 > Renamed from `nocollide`. Old `nocollide.json` files, hooks and env files keep working; `slotenv doctor` tells you what to rename.
 

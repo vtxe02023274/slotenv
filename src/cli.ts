@@ -71,7 +71,7 @@ function runCommand(command: string[], vars: Record<string, string>): Promise<nu
       if (child.exitCode === null) child.kill(signal);
     };
     const handlers: Array<[NodeJS.Signals, () => void]> = [
-      ["SIGINT", () => undefined],
+      ["SIGINT", process.stdin.isTTY ? () => undefined : forward("SIGINT")],
       ["SIGTERM", forward("SIGTERM")],
       ["SIGHUP", forward("SIGHUP")],
     ];

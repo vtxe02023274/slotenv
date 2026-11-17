@@ -51,22 +51,28 @@ export async function provisionDatabases(
   slot: number,
   root: string,
   mainRoot: string | undefined,
+  owned: Set<string>,
+  onCreated: (db: CreatedDatabase) => Promise<void>,
 ): Promise<Provisioned> {
   const result: Provisioned = { created: [], copied: [], warnings: [] };
   if (slot === 0 || !databases) return result;
   for (const [name, db] of Object.entries(databases)) {
-    if (db.kind === "postgres") {
+    if (db.kind === "postgres" || db.kind === "mysql") {
       const url = slotDatabaseValue(db, slot);
-      if (!(await databaseExists(url))) {
-        await createDatabase(url, db.template ? databaseName(db.url) : undefined);
-        result.created.push({ kind: "postgres", url });
+      const exists = db.kind === "postgres" ? await databaseExists(url) : await mysqlDatabaseExists(url);
+      if (exists) {
+        if (!owned.has(url)) {
+          result.warnings.push(
+            `${name}: database ${databaseName(url)} already existed, so this slot uses it as it is and nocollide will never drop it.`,
+          );
+        }
+        continue;
       }
-    } else if (db.kind === "mysql") {
-      const url = slotDatabaseValue(db, slot);
-      if (!(await mysqlDatabaseExists(url))) {
-        await createMysqlDatabase(url, db.template ? databaseName(db.url) : undefined);
-        result.created.push({ kind: "mysql", url });
-      }
+      const template = db.template ? databaseName(db.url) : undefined;
+      await (db.kind === "postgres" ? createDatabase(url, template) : createMysqlDatabase(url, template));
+      const created: CreatedDatabase = { kind: db.kind, url };
+      await onCreated(created);
+      result.created.push(created);
     } else if (db.kind === "sqlite") {
       const file = sqliteFile(db.path);
       if (isAbsolute(file)) {
@@ -78,6 +84,9 @@ export async function provisionDatabases(
       if (!existsSync(target) && source && existsSync(source)) {
         mkdirSync(dirname(target), { recursive: true });
         copyFileSync(source, target);
+        for (const suffix of ["-wal", "-shm"]) {
+          if (existsSync(source + suffix)) copyFileSync(source + suffix, target + suffix);
+        }
         result.copied.push(target);
       }
     } else {

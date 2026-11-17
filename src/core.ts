@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE, DEFAULT_STEP, loadConfig, type Config, type EnvConfig } from "./config.js";
@@ -15,10 +16,12 @@ import { pathKey } from "./paths.js";
 import { isPortFree } from "./ports.js";
 import { dropMysqlDatabase } from "./mysql.js";
 import { dropDatabase } from "./postgres.js";
-import { withRegistry, type SlotEntry } from "./registry.js";
+import { redact } from "./redact.js";
+import { withLock, withRegistry, type Registry, type SlotEntry } from "./registry.js";
 
 export const MAX_SLOTS = 100;
 export const DEFAULT_ENV_TO = ".env.local";
+const PROVISION_TIMEOUT_MS = 10 * 60_000;
 
 export interface Claim {
   slot: number;
@@ -125,26 +128,58 @@ function configFor(worktree: Worktree): { config: Config; source: string } {
   return { config: loadConfig(worktree.root), source: worktree.root };
 }
 
-function keys(worktree: Worktree): { repo: string; worktree: string } {
-  return { repo: pathKey(worktree.repo), worktree: pathKey(worktree.root) };
+function keys(worktree: Worktree): { repo: string; worktree: string; gitDir: string } {
+  return { repo: pathKey(worktree.repo), worktree: pathKey(worktree.root), gitDir: pathKey(worktree.gitDir) };
 }
 
 function mainRootOf(worktree: Worktree): string {
   return worktree.isMain ? worktree.root : (mainWorktreeRoot(worktree.root) ?? worktree.root);
 }
 
-async function dropAll(databases: CreatedDatabase[] | undefined): Promise<{ dropped: string[]; failed: string[] }> {
-  const dropped: string[] = [];
-  const failed: string[] = [];
+export function isAlive(entry: SlotEntry): boolean {
+  if (existsSync(entry.root)) return true;
+  if (!entry.gitDir) return false;
+  try {
+    const target = readFileSync(join(entry.gitDir, "gitdir"), "utf8").trim();
+    return target !== "" && existsSync(target);
+  } catch {
+    return false;
+  }
+}
+
+function takenSlots(registry: Registry): Set<number> {
+  const taken = new Set<number>();
+  for (const slots of Object.values(registry.repos)) {
+    for (const entry of Object.values(slots)) if (entry.slot > 0) taken.add(entry.slot);
+  }
+  return taken;
+}
+
+interface DropOutcome {
+  dropped: string[];
+  failed: CreatedDatabase[];
+  messages: string[];
+}
+
+async function dropAll(databases: CreatedDatabase[] | undefined): Promise<DropOutcome> {
+  const outcome: DropOutcome = { dropped: [], failed: [], messages: [] };
   for (const db of databases ?? []) {
     try {
       await (db.kind === "mysql" ? dropMysqlDatabase(db.url) : dropDatabase(db.url));
-      dropped.push(db.url);
+      outcome.dropped.push(db.url);
     } catch (error) {
-      failed.push(`Could not drop ${db.url}: ${(error as Error).message}`);
+      outcome.failed.push(db);
+      outcome.messages.push(`Could not drop ${redact(db.url)}: ${redact((error as Error).message)}`);
     }
   }
-  return { dropped, failed };
+  return outcome;
+}
+
+function removeEntry(registry: Registry, repo: string, id: string): void {
+  const slots = registry.repos[repo];
+  if (!slots) return;
+  delete slots[id];
+  if (Object.keys(slots).length === 0) delete registry.repos[repo];
 }
 
 export function init(cwd: string, options: { force?: boolean } = {}): InitResult {
@@ -164,47 +199,67 @@ export function init(cwd: string, options: { force?: boolean } = {}): InitResult
   return { file, config, detection };
 }
 
-export async function up(cwd: string, options: { force?: boolean } = {}): Promise<Claim> {
+export async function up(cwd: string, options: { force?: boolean; writeEnv?: boolean } = {}): Promise<Claim> {
   const worktree = currentWorktree(cwd);
   const { config, source } = configFor(worktree);
-  assertEnvWritable(worktree.root, config.env, options.force ?? false);
+  const envConfig = options.writeEnv === false ? undefined : config.env;
+  assertEnvWritable(worktree.root, envConfig, options.force ?? false);
   const key = keys(worktree);
 
-  const { slot, created } = await withRegistry(async (registry) => {
+  const { slot, created, owned } = await withRegistry(async (registry) => {
     const slots = (registry.repos[key.repo] ??= {});
-    const existing = slots[key.worktree];
+    let existing = slots[key.worktree];
+    if (!existing) {
+      const moved = Object.entries(slots).find(
+        ([, entry]) => entry.gitDir !== undefined && pathKey(entry.gitDir) === key.gitDir && !existsSync(entry.root),
+      );
+      if (moved) {
+        existing = moved[1];
+        delete slots[moved[0]];
+        slots[key.worktree] = existing;
+      }
+    }
+    const owned = new Set((existing?.databases ?? []).map((db) => db.url));
     if (existing && (!worktree.isMain || existing.slot === 0) && fitsPortRange(config, existing.slot)) {
       existing.root = worktree.root;
+      existing.gitDir = worktree.gitDir;
       existing.ports = slotPorts(config, existing.slot);
-      return { slot: existing.slot, created: false };
+      return { slot: existing.slot, created: false, owned };
     }
+    const carried = existing?.databases;
     delete slots[key.worktree];
     let chosen: number;
     if (worktree.isMain) {
       for (const [other, entry] of Object.entries(slots)) if (entry.slot === 0) delete slots[other];
       chosen = 0;
     } else {
-      chosen = await findSlot(config, new Set(Object.values(slots).map((entry) => entry.slot)));
+      chosen = await findSlot(config, takenSlots(registry));
     }
-    slots[key.worktree] = {
+    const entry: SlotEntry = {
       slot: chosen,
       root: worktree.root,
+      gitDir: worktree.gitDir,
       ports: slotPorts(config, chosen),
       claimedAt: new Date().toISOString(),
     };
-    return { slot: chosen, created: true };
+    if (carried?.length) entry.databases = carried;
+    slots[key.worktree] = entry;
+    return { slot: chosen, created: true, owned };
   });
 
   const mainRoot = mainRootOf(worktree);
-  const provisioned = await provisionDatabases(config.databases, slot, worktree.root, mainRoot);
-  if (provisioned.created.length > 0) {
-    await withRegistry((registry) => {
+  const record = (db: CreatedDatabase) =>
+    withRegistry((registry) => {
       const entry = registry.repos[key.repo]?.[key.worktree];
       if (!entry) return;
-      const known = new Set((entry.databases ?? []).map((db) => db.url));
-      entry.databases = [...(entry.databases ?? []), ...provisioned.created.filter((db) => !known.has(db.url))];
+      if (!(entry.databases ?? []).some((known) => known.url === db.url)) entry.databases = [...(entry.databases ?? []), db];
     });
-  }
+  const lockName = `provision-${createHash("sha1").update(key.worktree).digest("hex").slice(0, 16)}`;
+  const provisioned = config.databases
+    ? await withLock(lockName, PROVISION_TIMEOUT_MS, "another nocollide command that is setting up databases for this worktree", () =>
+        provisionDatabases(config.databases, slot, worktree.root, mainRoot, owned, record),
+      )
+    : { created: [], copied: [], warnings: [] };
 
   const ports = slotPorts(config, slot);
   const databases = slotDatabaseVars(config.databases, slot);
@@ -222,32 +277,32 @@ export async function up(cwd: string, options: { force?: boolean } = {}): Promis
     copied: provisioned.copied,
     warnings: provisioned.warnings,
   };
-  if (config.env) claim.envFile = writeEnv(worktree.root, source, config.env, vars, slot);
+  if (envConfig) claim.envFile = writeEnv(worktree.root, source, envConfig, vars, slot);
   return claim;
 }
 
 export async function down(cwd: string, options: { keepData?: boolean } = {}): Promise<Released> {
   const worktree = currentWorktree(cwd);
   const key = keys(worktree);
-  const entry = await withRegistry((registry) => {
-    const slots = registry.repos[key.repo];
-    const found = slots?.[key.worktree];
-    if (!slots || !found) return undefined;
-    delete slots[key.worktree];
-    if (Object.keys(slots).length === 0) delete registry.repos[key.repo];
-    return found;
-  });
+  const entry = await withRegistry((registry) => registry.repos[key.repo]?.[key.worktree]);
   const result: Released = { droppedDatabases: [], keptDatabases: [] };
-  let failed: string[] = [];
+  let outcome: DropOutcome = { dropped: [], failed: [], messages: [] };
   if (entry) {
     result.slot = entry.slot;
-    if (options.keepData) {
-      result.keptDatabases = (entry.databases ?? []).map((db) => db.url);
-    } else {
-      const outcome = await dropAll(entry.databases);
-      result.droppedDatabases = outcome.dropped;
-      failed = outcome.failed;
-    }
+    if (options.keepData) result.keptDatabases = (entry.databases ?? []).map((db) => db.url);
+    else outcome = await dropAll(entry.databases);
+    result.droppedDatabases = outcome.dropped;
+    await withRegistry((registry) => {
+      const current = registry.repos[key.repo]?.[key.worktree];
+      if (!current) return;
+      if (outcome.failed.length > 0) current.databases = outcome.failed;
+      else removeEntry(registry, key.repo, key.worktree);
+    });
+  }
+  if (outcome.failed.length > 0) {
+    throw new NocollideError(
+      `${outcome.messages.join(" ")} The slot stays claimed, so run "nocollide down" again once that is fixed.`,
+    );
   }
   let env: EnvConfig | undefined;
   try {
@@ -262,7 +317,6 @@ export async function down(cwd: string, options: { keepData?: boolean } = {}): P
       result.removedEnv = file;
     }
   }
-  if (failed.length > 0) throw new NocollideError(`Released slot ${result.slot}, but: ${failed.join(" ")}`);
   return result;
 }
 
@@ -271,32 +325,41 @@ export async function list(cwd: string): Promise<SlotRow[]> {
   const key = keys(worktree);
   return withRegistry((registry) =>
     Object.entries(registry.repos[key.repo] ?? {})
-      .map(([id, entry]) => ({ ...entry, current: id === key.worktree, exists: existsSync(entry.root) }))
+      .map(([id, entry]) => ({ ...entry, current: id === key.worktree, exists: isAlive(entry) }))
       .sort((a, b) => a.slot - b.slot),
   );
 }
 
 export async function gc(options: { keepData?: boolean } = {}): Promise<Collected> {
-  const removed = await withRegistry((registry) => {
-    const found: SlotEntry[] = [];
+  const candidates = await withRegistry((registry) => {
+    const found: Array<{ repo: string; id: string; entry: SlotEntry }> = [];
     for (const [repo, slots] of Object.entries(registry.repos)) {
-      for (const [id, entry] of Object.entries(slots)) {
-        if (!existsSync(entry.root)) {
-          found.push(entry);
-          delete slots[id];
-        }
-      }
-      if (Object.keys(slots).length === 0) delete registry.repos[repo];
+      for (const [id, entry] of Object.entries(slots)) if (!isAlive(entry)) found.push({ repo, id, entry });
     }
-    return found.sort((a, b) => a.slot - b.slot);
+    return found.sort((a, b) => a.entry.slot - b.entry.slot);
   });
-  const result: Collected = { removed, droppedDatabases: [], warnings: [] };
-  if (!options.keepData) {
-    for (const entry of removed) {
-      const { dropped, failed } = await dropAll(entry.databases);
-      result.droppedDatabases.push(...dropped);
-      result.warnings.push(...failed);
-    }
+  const result: Collected = { removed: [], droppedDatabases: [], warnings: [] };
+  const outcomes = new Map<string, DropOutcome>();
+  for (const candidate of candidates) {
+    const outcome: DropOutcome = options.keepData
+      ? { dropped: [], failed: [], messages: [] }
+      : await dropAll(candidate.entry.databases);
+    outcomes.set(`${candidate.repo}\n${candidate.id}`, outcome);
+    result.droppedDatabases.push(...outcome.dropped);
+    result.warnings.push(...outcome.messages);
   }
+  await withRegistry((registry) => {
+    for (const candidate of candidates) {
+      const current = registry.repos[candidate.repo]?.[candidate.id];
+      if (!current || isAlive(current)) continue;
+      const outcome = outcomes.get(`${candidate.repo}\n${candidate.id}`)!;
+      if (outcome.failed.length > 0) {
+        current.databases = outcome.failed;
+      } else {
+        removeEntry(registry, candidate.repo, candidate.id);
+        result.removed.push(candidate.entry);
+      }
+    }
+  });
   return result;
 }

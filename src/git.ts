@@ -6,6 +6,7 @@ import { pathKey } from "./paths.js";
 export interface Worktree {
   root: string;
   repo: string;
+  gitDir: string;
   isMain: boolean;
 }
 
@@ -27,6 +28,7 @@ export function currentWorktree(cwd: string): Worktree {
   return {
     root: resolve(root),
     repo: resolve(common),
+    gitDir: resolve(dir),
     isMain: pathKey(common) === pathKey(dir),
   };
 }

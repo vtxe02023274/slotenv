@@ -47,15 +47,18 @@ main worktree   slot 0   WEB_PORT=3000   db app_dev      redis /0   compose shop
 
 ```bash
 nocollide init            # once per repository: writes nocollide.json
+nocollide hook install    # once per clone: new worktrees run "nocollide up" by themselves
 nocollide up              # in a worktree: claims a slot and writes .env.local
 nocollide run -- npm run dev   # runs a command with the slot variables set
+nocollide env             # prints the slot variables (--shell sh|powershell|cmd, --json)
 nocollide port WEB_PORT   # prints one port, handy in scripts
-nocollide ls              # every slot of this repository
+nocollide ls              # every slot of this repository (--json for tools)
 nocollide down            # releases the slot, drops its databases, removes .env.local
 nocollide gc              # the same for worktrees that were deleted
+nocollide doctor          # checks the setup and says what to fix
 ```
 
-`init` reads ports from `.env.example` (`WEB_PORT=3000`) and from `package.json` scripts (`--port 3000`, `-p 3000`, `PORT=3000`), finds database URLs in `.env.example`, notices a Compose file, and writes:
+`init` reads ports from `.env.example` (`WEB_PORT=3000`) and from `package.json` scripts (`--port 3000`, `-p 3000`, `PORT=3000`), falls back to the framework default (Vite 5173, Next.js 3000, Astro 4321, Angular 4200, Django 8000, Flask 5000, Rails 3000), finds database URLs in `.env.example`, notices a Compose file, and writes:
 
 ```json
 {
@@ -115,6 +118,21 @@ Most frameworks read `PORT` or a variable you pass in config. If a script hard-c
 nocollide run -- npm run dev
 ```
 
+### Automatic setup for new worktrees
+
+```bash
+nocollide hook install
+```
+
+This adds a git `post-checkout` hook, so `git worktree add` (and every tool built on it) claims a slot and writes `.env.local` before the agent even starts. An existing hook is kept: nocollide adds a marked block and `nocollide hook uninstall` removes only that block. `core.hooksPath` setups such as Husky are supported.
+
+### Load the variables in a shell
+
+```bash
+eval "$(nocollide env)"                          # bash, zsh
+nocollide env --shell powershell | Invoke-Expression   # PowerShell
+```
+
 ### Tell your agents
 
 Add one line to `AGENTS.md` or your agent's instructions file:
@@ -122,6 +140,8 @@ Add one line to `AGENTS.md` or your agent's instructions file:
 ```text
 Before starting a dev server or tests in a worktree, run `npx nocollide up` and use the ports and database URLs in .env.local.
 ```
+
+Orchestrators can read `nocollide ls --json` and `nocollide env --json` instead of parsing text.
 
 ## Non-goals
 

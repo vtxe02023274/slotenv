@@ -23,7 +23,10 @@
 ## v0.3 - agent integrations
 
 - [ ] Ready-made instructions for popular coding agents
-- [ ] git `post-checkout` hook installer
+- [x] git `post-checkout` hook installer
+- [x] `nocollide env` and `ls --json` for shells and orchestrators
+- [x] `nocollide doctor`
+- [x] Framework default ports in `init`
 - [ ] Recipes for popular worktree managers and agent orchestrators
 
 ## Launch

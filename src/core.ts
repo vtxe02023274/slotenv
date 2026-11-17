@@ -13,6 +13,7 @@ import { NocollideError } from "./errors.js";
 import { currentWorktree, mainWorktreeRoot, type Worktree } from "./git.js";
 import { pathKey } from "./paths.js";
 import { isPortFree } from "./ports.js";
+import { dropMysqlDatabase } from "./mysql.js";
 import { dropDatabase } from "./postgres.js";
 import { withRegistry, type SlotEntry } from "./registry.js";
 
@@ -137,7 +138,7 @@ async function dropAll(databases: CreatedDatabase[] | undefined): Promise<{ drop
   const failed: string[] = [];
   for (const db of databases ?? []) {
     try {
-      await dropDatabase(db.url);
+      await (db.kind === "mysql" ? dropMysqlDatabase(db.url) : dropDatabase(db.url));
       dropped.push(db.url);
     } catch (error) {
       failed.push(`Could not drop ${db.url}: ${(error as Error).message}`);

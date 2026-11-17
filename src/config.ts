@@ -13,6 +13,12 @@ export interface PostgresConfig {
   template: boolean;
 }
 
+export interface MysqlConfig {
+  kind: "mysql";
+  url: string;
+  template: boolean;
+}
+
 export interface SqliteConfig {
   kind: "sqlite";
   path: string;
@@ -23,7 +29,7 @@ export interface RedisConfig {
   url: string;
 }
 
-export type DatabaseConfig = PostgresConfig | SqliteConfig | RedisConfig;
+export type DatabaseConfig = PostgresConfig | MysqlConfig | SqliteConfig | RedisConfig;
 
 export interface ComposeConfig {
   name?: string;
@@ -41,7 +47,7 @@ export const CONFIG_FILE = "nocollide.json";
 export const DEFAULT_STEP = 10;
 
 const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
-const KINDS = ["postgres", "sqlite", "redis"];
+const KINDS = ["postgres", "mysql", "sqlite", "redis"];
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74,6 +80,18 @@ function parseDatabase(name: string, value: unknown): DatabaseConfig {
       throw invalid(`database "${name}" "template" must be true or false`);
     }
     return { kind: "postgres", url: value.url, template: value.template !== false };
+  }
+  if (value.kind === "mysql") {
+    if (!isUrl(value.url, ["mysql:", "mariadb:"])) {
+      throw invalid(`database "${name}" needs a "url" such as mysql://root@localhost:3306/app_dev`);
+    }
+    if (!decodeURIComponent(new URL(value.url).pathname.slice(1))) {
+      throw invalid(`database "${name}" url must name a database, such as /app_dev`);
+    }
+    if (value.template !== undefined && typeof value.template !== "boolean") {
+      throw invalid(`database "${name}" "template" must be true or false`);
+    }
+    return { kind: "mysql", url: value.url, template: value.template !== false };
   }
   if (value.kind === "redis") {
     if (!isUrl(value.url, ["redis:", "rediss:"])) {

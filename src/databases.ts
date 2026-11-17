@@ -1,12 +1,13 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { ComposeConfig, DatabaseConfig } from "./config.js";
+import { createMysqlDatabase, mysqlDatabaseExists } from "./mysql.js";
 import { createDatabase, databaseExists, databaseName, withDatabase } from "./postgres.js";
 
 export const REDIS_DEFAULT_DATABASES = 16;
 
 export interface CreatedDatabase {
-  kind: "postgres";
+  kind: "postgres" | "mysql";
   url: string;
 }
 
@@ -19,7 +20,7 @@ export interface Provisioned {
 export function slotDatabaseValue(db: DatabaseConfig, slot: number): string {
   if (db.kind === "sqlite") return db.path;
   if (slot === 0) return db.url;
-  if (db.kind === "postgres") return withDatabase(db.url, `${databaseName(db.url)}_s${slot}`);
+  if (db.kind === "postgres" || db.kind === "mysql") return withDatabase(db.url, `${databaseName(db.url)}_s${slot}`);
   const url = new URL(db.url);
   const base = Number(url.pathname.slice(1) || "0");
   url.pathname = `/${base + slot}`;
@@ -59,6 +60,12 @@ export async function provisionDatabases(
       if (!(await databaseExists(url))) {
         await createDatabase(url, db.template ? databaseName(db.url) : undefined);
         result.created.push({ kind: "postgres", url });
+      }
+    } else if (db.kind === "mysql") {
+      const url = slotDatabaseValue(db, slot);
+      if (!(await mysqlDatabaseExists(url))) {
+        await createMysqlDatabase(url, db.template ? databaseName(db.url) : undefined);
+        result.created.push({ kind: "mysql", url });
       }
     } else if (db.kind === "sqlite") {
       const file = sqliteFile(db.path);

@@ -5,6 +5,7 @@ import { relative } from "node:path";
 import { down, gc, init, list, up } from "./core.js";
 import { doctor } from "./doctor.js";
 import { NocollideError } from "./errors.js";
+import { redact } from "./redact.js";
 import { isIgnored } from "./git.js";
 import { installHook, uninstallHook } from "./hook.js";
 import { formatVars, parseShell } from "./shell.js";
@@ -39,9 +40,6 @@ function formatPorts(ports: Record<string, number>): string {
     .join(" ");
 }
 
-function redact(value: string): string {
-  return value.replace(/^([a-z][a-z0-9+.-]*:\/\/[^:/@]*:)[^@/]+@/i, "$1***@");
-}
 
 function databaseLabel(value: string): string {
   try {
@@ -69,15 +67,32 @@ function runCommand(command: string[], vars: Record<string, string>): Promise<nu
         })
       : spawn(file, args, { stdio: "inherit", env });
   return new Promise((resolve, reject) => {
-    child.once("error", (error) => reject(new NocollideError(`Could not start ${file}: ${error.message}`)));
-    child.once("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    const forward = (signal: NodeJS.Signals) => () => {
+      if (child.exitCode === null) child.kill(signal);
+    };
+    const handlers: Array<[NodeJS.Signals, () => void]> = [
+      ["SIGINT", () => undefined],
+      ["SIGTERM", forward("SIGTERM")],
+      ["SIGHUP", forward("SIGHUP")],
+    ];
+    for (const [signal, handler] of handlers) process.on(signal, handler);
+    const cleanup = () => {
+      for (const [signal, handler] of handlers) process.off(signal, handler);
+    };
+    child.once("error", (error) => {
+      cleanup();
+      reject(new NocollideError(`Could not start ${file}: ${error.message}`));
+    });
+    child.once("exit", (code, signal) => {
+      cleanup();
+      resolve(code ?? (signal ? 1 : 0));
+    });
   });
 }
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
-  const separator = rest.indexOf("--");
-  const own = separator >= 0 ? rest.slice(0, separator) : rest;
+  const own = command === "run" ? [] : rest;
   const flags = new Set(own.filter((arg) => arg.startsWith("-")).map((arg) => arg.split("=")[0]!));
   const option = (name: string): string | undefined => {
     const inline = own.find((arg) => arg.startsWith(`${name}=`));
@@ -186,7 +201,7 @@ async function main(argv: string[]): Promise<number> {
     case "port": {
       const name = positional[0];
       if (!name) throw new NocollideError("Usage: nocollide port <NAME>");
-      const claim = await up(cwd);
+      const claim = await up(cwd, { writeEnv: false });
       const port = claim.ports[name];
       if (port === undefined) {
         throw new NocollideError(`Unknown port "${name}". Known: ${Object.keys(claim.ports).join(", ")}`);
@@ -195,13 +210,13 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "run": {
-      const commandLine = separator >= 0 ? rest.slice(separator + 1) : rest;
-      const claim = await up(cwd);
+      const commandLine = rest[0] === "--" ? rest.slice(1) : rest;
+      const claim = await up(cwd, { writeEnv: false });
       return runCommand(commandLine, claim.vars);
     }
     case "env": {
       const shell = flags.has("--json") ? "json" : parseShell(option("--shell"));
-      const claim = await up(cwd);
+      const claim = await up(cwd, { writeEnv: false });
       process.stdout.write(formatVars(claim.vars, shell));
       return 0;
     }
@@ -238,7 +253,7 @@ main(process.argv.slice(2)).then(
   },
   (error: unknown) => {
     if (error instanceof NocollideError) {
-      console.error(`nocollide: ${error.message}`);
+      console.error(`nocollide: ${redact(error.message)}`);
     } else {
       console.error(error);
     }

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE, loadConfig, type Config } from "./config.js";
 import { currentWorktree, isIgnored, mainWorktreeRoot } from "./git.js";
+import { isAlive } from "./core.js";
 import { hookInstalled } from "./hook.js";
 import { pathKey } from "./paths.js";
 import { withRegistry } from "./registry.js";
@@ -107,7 +108,7 @@ export async function doctor(cwd: string): Promise<Check[]> {
   const repo = pathKey(worktree.repo);
   const here = pathKey(worktree.root);
   const slots = await withRegistry((registry) => Object.entries(registry.repos[repo] ?? {}));
-  const missing = slots.filter(([, entry]) => !existsSync(entry.root));
+  const missing = slots.filter(([, entry]) => !isAlive(entry));
   if (missing.length > 0) {
     checks.push({ level: "warn", message: `${missing.length} slot(s) belong to deleted worktrees. Run "nocollide gc".` });
   }

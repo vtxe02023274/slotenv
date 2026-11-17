@@ -92,7 +92,7 @@ test("a database created before a later failure is still recorded and dropped", 
   await assert.rejects(up(worktree), /mysql was not found/);
   assert.ok(pg.databases.has("app_s1"));
   const rows = await list(worktree);
-  assert.deepEqual(rows[0]?.databases, [{ kind: "postgres", url: "postgres://localhost/app_s1" }]);
+  assert.deepEqual(rows[0]?.databases, [{ kind: "postgres", url: "postgres://localhost/app_s1", ready: true }]);
   await down(worktree);
   assert.equal(pg.databases.has("app_s1"), false);
 });
@@ -181,7 +181,7 @@ test("a lock left by a dead process is taken over at once", async (t) => {
   t.after(box.cleanup);
   const lock = join(homeDir(), "registry.lock");
   mkdirSync(lock, { recursive: true });
-  writeFileSync(join(lock, "owner"), "2147483646");
+  writeFileSync(join(lock, "owner"), "2147483646 deadbeef");
   const started = Date.now();
   await withRegistry(() => undefined);
   assert.ok(Date.now() - started < 2000);

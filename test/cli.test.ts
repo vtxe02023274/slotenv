@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addWorktree, config, randomBase, runCli, sandbox } from "./helpers.js";
+import { addWorktree, freeBase, config, runCli, sandbox } from "./helpers.js";
 
 test("parallel up calls from many worktrees never share a slot", async (t) => {
-  const base = randomBase();
+  const base = await freeBase([0, 5000]);
   const box = sandbox({ "nocollide.json": config({ WEB_PORT: base, API_PORT: base + 5000 }) });
   t.after(box.cleanup);
   const worktrees = Array.from({ length: 6 }, (_, index) => addWorktree(box, `agent-${index}`));
@@ -17,7 +17,7 @@ test("parallel up calls from many worktrees never share a slot", async (t) => {
 });
 
 test("run passes the slot variables to the command and port prints one port", async (t) => {
-  const base = randomBase();
+  const base = await freeBase();
   const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "runner");
@@ -35,7 +35,7 @@ test("run passes the slot variables to the command and port prints one port", as
 test("up hides database passwords and keeps sqlite paths as written", async (t) => {
   const box = sandbox({
     "nocollide.json": config(
-      { WEB_PORT: randomBase() },
+      { WEB_PORT: await freeBase() },
       {
         databases: {
           CACHE_URL: { kind: "redis", url: "redis://user:hunter2@localhost:6379/0" },

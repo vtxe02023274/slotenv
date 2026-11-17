@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isPortFree } from "../src/ports.js";
 
 export const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.js");
 
@@ -20,8 +21,24 @@ function git(cwd: string, args: string[]): void {
   });
 }
 
-export function randomBase(): number {
-  return 20000 + Math.floor(Math.random() * 300) * 100;
+const SLOTS_CHECKED = 10;
+const used = new Set<number>();
+
+export async function freeBase(offsets: number[] = [0]): Promise<number> {
+  const stripe = process.pid % 30;
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const base = 20000 + (stripe * 10 + Math.floor(Math.random() * 10) + attempt * 30) % 300 * 100;
+    if (used.has(base)) continue;
+    let free = true;
+    for (const offset of offsets) {
+      for (let slot = 0; slot < SLOTS_CHECKED && free; slot += 1) free = await isPortFree(base + offset + slot * 10);
+    }
+    if (free) {
+      used.add(base);
+      return base;
+    }
+  }
+  throw new Error("No free port range for the test");
 }
 
 export function sandbox(files: Record<string, string> = {}): Sandbox {

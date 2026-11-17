@@ -7,7 +7,7 @@ import { down, gc, init, up } from "../src/core.js";
 import { composeProjectName, slotDatabaseValue } from "../src/databases.js";
 import { detectPorts } from "../src/detect.js";
 import { setPsqlRunner } from "../src/postgres.js";
-import { addWorktree, randomBase, removeWorktree, sandbox } from "./helpers.js";
+import { addWorktree, freeBase, removeWorktree, sandbox } from "./helpers.js";
 
 function fakePostgres(existing: string[] = ["app_dev"]) {
   const databases = new Set(existing);
@@ -33,8 +33,8 @@ function fakePostgres(existing: string[] = ["app_dev"]) {
   return { databases, calls };
 }
 
-function dbConfig(extra: Record<string, unknown>): string {
-  return `${JSON.stringify({ ports: { WEB_PORT: randomBase() }, env: { to: ".env.local" }, ...extra }, null, 2)}\n`;
+async function dbConfig(extra: Record<string, unknown>): Promise<string> {
+  return `${JSON.stringify({ ports: { WEB_PORT: await freeBase() }, env: { to: ".env.local" }, ...extra }, null, 2)}\n`;
 }
 
 test("slot values for postgres, redis and sqlite", () => {
@@ -100,7 +100,7 @@ test("postgres: each slot gets a database cloned from the template and down drop
   const pg = fakePostgres();
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: "postgres://me:pw@localhost:5432/app_dev" } } }),
+    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: "postgres://me:pw@localhost:5432/app_dev" } } }),
   });
   t.after(box.cleanup);
   const main = await up(box.repo);
@@ -127,7 +127,7 @@ test("postgres: template false, --keep-data and gc", async (t) => {
   const pg = fakePostgres([]);
   t.after(() => setPsqlRunner(undefined));
   const box = sandbox({
-    "nocollide.json": dbConfig({
+    "nocollide.json": await dbConfig({
       databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app", template: false } },
     }),
   });
@@ -149,7 +149,7 @@ test("postgres: template false, --keep-data and gc", async (t) => {
 
 test("sqlite: the main worktree file is copied into new worktrees", async (t) => {
   const box = sandbox({
-    "nocollide.json": dbConfig({ databases: { DATABASE_URL: { kind: "sqlite", path: "file:./data/dev.db" } } }),
+    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "sqlite", path: "file:./data/dev.db" } } }),
     ".gitignore": "data/\n.env.local\n",
   });
   t.after(box.cleanup);
@@ -168,7 +168,7 @@ test("sqlite: the main worktree file is copied into new worktrees", async (t) =>
 
 test("redis and compose variables reach the env file", async (t) => {
   const box = sandbox({
-    "nocollide.json": dbConfig({ databases: { REDIS_URL: { kind: "redis", url: "redis://localhost:6379/14" } }, compose: true }),
+    "nocollide.json": await dbConfig({ databases: { REDIS_URL: { kind: "redis", url: "redis://localhost:6379/14" } }, compose: true }),
   });
   t.after(box.cleanup);
   const a = addWorktree(box, "a");
@@ -199,7 +199,7 @@ test("postgres against a real server", { skip: realPostgres ? false : "set NOCOL
   psql(admin.toString(), `CREATE DATABASE "${name}"`);
   psql(base, "CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2)");
 
-  const box = sandbox({ "nocollide.json": dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: base } } }) });
+  const box = sandbox({ "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: base } } }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "pg");
   const claim = await up(worktree);

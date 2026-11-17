@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { down, gc, init, list, up } from "../src/core.js";
-import { addWorktree, config, randomBase, removeWorktree, sandbox } from "./helpers.js";
+import { addWorktree, freeBase, config, removeWorktree, sandbox } from "./helpers.js";
 
 function listen(port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
@@ -15,7 +15,7 @@ function listen(port: number): Promise<Server> {
 }
 
 test("main worktree gets slot 0 and other worktrees get the next free slots", async (t) => {
-  const base = randomBase();
+  const base = await freeBase();
   const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }), ".env.example": "WEB_PORT=1\n" });
   t.after(box.cleanup);
   const a = addWorktree(box, "feat-a");
@@ -38,7 +38,7 @@ test("main worktree gets slot 0 and other worktrees get the next free slots", as
 });
 
 test("a slot whose port is already listening is skipped", async (t) => {
-  const base = randomBase();
+  const base = await freeBase();
   const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
   t.after(box.cleanup);
   const server = await listen(base + 10);
@@ -48,7 +48,7 @@ test("a slot whose port is already listening is skipped", async (t) => {
 });
 
 test("down frees the slot and removes the generated env file", async (t) => {
-  const base = randomBase();
+  const base = await freeBase();
   const box = sandbox({ "nocollide.json": config({ WEB_PORT: base }) });
   t.after(box.cleanup);
   const a = addWorktree(box, "a");
@@ -64,7 +64,7 @@ test("down frees the slot and removes the generated env file", async (t) => {
 });
 
 test("an env file that nocollide did not write is never overwritten without force", async (t) => {
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: randomBase() }) });
+  const box = sandbox({ "nocollide.json": config({ WEB_PORT: await freeBase() }) });
   t.after(box.cleanup);
   const a = addWorktree(box, "a");
   writeFileSync(join(a, ".env.local"), "MINE=1\n");
@@ -77,7 +77,7 @@ test("an env file that nocollide did not write is never overwritten without forc
 });
 
 test("ls lists slots and gc releases deleted worktrees", async (t) => {
-  const box = sandbox({ "nocollide.json": config({ WEB_PORT: randomBase() }) });
+  const box = sandbox({ "nocollide.json": config({ WEB_PORT: await freeBase() }) });
   t.after(box.cleanup);
   const a = addWorktree(box, "a");
   const b = addWorktree(box, "b");
@@ -117,7 +117,7 @@ test("init writes a config from detected ports and refuses to overwrite it", asy
 });
 
 test("a worktree without its own config uses the main worktree config and template", async (t) => {
-  const base = randomBase();
+  const base = await freeBase();
   const box = sandbox();
   t.after(box.cleanup);
   const worktree = addWorktree(box, "early");

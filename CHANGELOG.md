@@ -23,7 +23,11 @@ Fixes:
 - `run`, `env` and `port` no longer write or require the env file
 - `--` is only a separator when it comes right after `run`
 - `run` forwards SIGTERM and SIGHUP to the command
-- A lock left by a crashed process is taken over at once
+- A lock left by a crashed process is taken over at once, only one waiter can take it over, and a holder only ever removes its own lock
+- An interrupted database copy is made again on the next `up` instead of being reused
+- Removing a worktree and adding a new one with the same name gives it a fresh slot
+- Slot numbers that two repositories shared under 0.2 are split again on `up`
+- `run` forwards SIGINT too when it is not attached to a terminal
 - SQLite `-wal` and `-shm` files are copied with the database
 
 ## 0.2.0

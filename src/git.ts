@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 import { pathKey } from "./paths.js";
 
 export interface Worktree {
@@ -19,11 +19,11 @@ export function currentWorktree(cwd: string): Worktree {
       { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
   } catch {
-    throw new NocollideError("Not inside a git worktree.");
+    throw new SlotenvError("Not inside a git worktree.");
   }
   const [root, common, dir] = output.trim().split(/\r?\n/);
   if (!root || !common || !dir) {
-    throw new NocollideError("Could not read the worktree layout from git.");
+    throw new SlotenvError("Could not read the worktree layout from git.");
   }
   return {
     root: resolve(root),

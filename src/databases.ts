@@ -66,7 +66,7 @@ export async function provisionDatabases(
       if (exists) {
         if (!mine) {
           result.warnings.push(
-            `${name}: database ${databaseName(url)} already existed, so this slot uses it as it is and nocollide will never drop it.`,
+            `${name}: database ${databaseName(url)} already existed, so this slot uses it as it is and slotenv will never drop it.`,
           );
           continue;
         }

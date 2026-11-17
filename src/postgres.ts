@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 
 export type PsqlRunner = (url: string, sql: string) => Promise<string>;
 
@@ -19,10 +19,10 @@ function defaultRunner(url: string, sql: string): Promise<string> {
         if (!error) return resolve(stdout.trim());
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           return reject(
-            new NocollideError("psql was not found. Install the Postgres client tools and make sure psql is on your PATH."),
+            new SlotenvError("psql was not found. Install the Postgres client tools and make sure psql is on your PATH."),
           );
         }
-        reject(new NocollideError(`psql failed: ${(stderr || error.message).trim()}`));
+        reject(new SlotenvError(`psql failed: ${(stderr || error.message).trim()}`));
       },
     );
   });
@@ -70,8 +70,8 @@ export async function createDatabase(url: string, template: string | undefined):
   } catch (error) {
     const message = (error as Error).message;
     if (template && /being accessed by other users/.test(message)) {
-      throw new NocollideError(
-        `Could not copy "${template}" because something is connected to it. Stop the dev server of the main worktree, run "nocollide up" again, or set "template": false to start with an empty database.`,
+      throw new SlotenvError(
+        `Could not copy "${template}" because something is connected to it. Stop the dev server of the main worktree, run "slotenv up" again, or set "template": false to start with an empty database.`,
       );
     }
     throw error;

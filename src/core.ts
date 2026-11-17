@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { CONFIG_FILE, DEFAULT_STEP, loadConfig, type Config, type EnvConfig } from "./config.js";
+import { basename, join } from "node:path";
+import { CONFIG_FILE, DEFAULT_STEP, configPath, loadConfig, type Config, type EnvConfig } from "./config.js";
 import {
   composeProjectName,
   provisionDatabases,
@@ -10,7 +10,7 @@ import {
 } from "./databases.js";
 import { detectPorts, type Detection } from "./detect.js";
 import { isGenerated, renderEnv } from "./env.js";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 import { currentWorktree, mainWorktreeRoot, type Worktree } from "./git.js";
 import { pathKey } from "./paths.js";
 import { isPortFree } from "./ports.js";
@@ -70,7 +70,7 @@ export function slotVars(ports: Record<string, number>, slot: number, extra: Rec
   const vars: Record<string, string> = {};
   for (const [name, port] of Object.entries(ports)) vars[name] = String(port);
   Object.assign(vars, extra);
-  vars.NOCOLLIDE_SLOT = String(slot);
+  vars.SLOTENV_SLOT = String(slot);
   return vars;
 }
 
@@ -90,7 +90,7 @@ async function findSlot(config: Config, taken: Set<number>): Promise<number> {
     if (taken.has(slot)) continue;
     if (await portsFree(slotPorts(config, slot))) return slot;
   }
-  throw new NocollideError("No free slot left. Run \"nocollide gc\", stop unused dev servers, or lower the base ports.");
+  throw new SlotenvError("No free slot left. Run \"slotenv gc\", stop unused dev servers, or lower the base ports.");
 }
 
 function envPath(root: string, env: EnvConfig): string {
@@ -101,8 +101,8 @@ function assertEnvWritable(root: string, env: EnvConfig | undefined, force: bool
   if (!env || force) return;
   const file = envPath(root, env);
   if (existsSync(file) && !isGenerated(readFileSync(file, "utf8"))) {
-    throw new NocollideError(
-      `${env.to} already exists and was not written by nocollide. Move its values into ${env.from ?? "a template"} or rerun with --force.`,
+    throw new SlotenvError(
+      `${env.to} already exists and was not written by slotenv. Move its values into ${env.from ?? "a template"} or rerun with --force.`,
     );
   }
 }
@@ -121,9 +121,9 @@ function writeEnv(root: string, source: string, env: EnvConfig, vars: Record<str
 }
 
 function configFor(worktree: Worktree): { config: Config; source: string } {
-  if (!worktree.isMain && !existsSync(join(worktree.root, CONFIG_FILE))) {
+  if (!worktree.isMain && !configPath(worktree.root)) {
     const main = mainWorktreeRoot(worktree.root);
-    if (main && existsSync(join(main, CONFIG_FILE))) return { config: loadConfig(main), source: main };
+    if (main && configPath(main)) return { config: loadConfig(main), source: main };
   }
   return { config: loadConfig(worktree.root), source: worktree.root };
 }
@@ -136,14 +136,16 @@ function mainRootOf(worktree: Worktree): string {
   return worktree.isMain ? worktree.root : (mainWorktreeRoot(worktree.root) ?? worktree.root);
 }
 
-const MARKER_FILE = "nocollide-slot";
+const MARKER_FILE = "slotenv-slot";
+const LEGACY_MARKER_FILE = "nocollide-slot";
 
 function readMarker(gitDir: string): string | undefined {
-  try {
-    return readFileSync(join(gitDir, MARKER_FILE), "utf8").trim();
-  } catch {
-    return undefined;
+  for (const name of [MARKER_FILE, LEGACY_MARKER_FILE]) {
+    try {
+      return readFileSync(join(gitDir, name), "utf8").trim();
+    } catch {}
   }
+  return undefined;
 }
 
 function writeMarker(worktree: Worktree, entry: SlotEntry): void {
@@ -215,8 +217,9 @@ function removeEntry(registry: Registry, repo: string, id: string): void {
 export function init(cwd: string, options: { force?: boolean } = {}): InitResult {
   const worktree = currentWorktree(cwd);
   const file = join(worktree.root, CONFIG_FILE);
-  if (existsSync(file) && !options.force) {
-    throw new NocollideError(`${CONFIG_FILE} already exists. Rerun with --force to replace it.`);
+  const existing = configPath(worktree.root);
+  if (existing && !options.force) {
+    throw new SlotenvError(`${basename(existing)} already exists. Rerun with --force to replace it.`);
   }
   const detection = detectPorts(worktree.root);
   const env: EnvConfig = detection.envFrom ? { from: detection.envFrom, to: DEFAULT_ENV_TO } : { to: DEFAULT_ENV_TO };
@@ -297,7 +300,7 @@ export async function up(cwd: string, options: { force?: boolean; writeEnv?: boo
     );
   const lockName = `provision-${createHash("sha1").update(key.worktree).digest("hex").slice(0, 16)}`;
   const provisioned = config.databases
-    ? await withLock(lockName, PROVISION_TIMEOUT_MS, "another nocollide command that is setting up databases for this worktree", () =>
+    ? await withLock(lockName, PROVISION_TIMEOUT_MS, "another slotenv command that is setting up databases for this worktree", () =>
         provisionDatabases(config.databases, slot, worktree.root, mainRoot, owned, record),
       )
     : { created: [], copied: [], warnings: [] };
@@ -341,8 +344,8 @@ export async function down(cwd: string, options: { keepData?: boolean } = {}): P
     });
   }
   if (outcome.failed.length > 0) {
-    throw new NocollideError(
-      `${outcome.messages.join(" ")} The slot stays claimed, so run "nocollide down" again once that is fixed.`,
+    throw new SlotenvError(
+      `${outcome.messages.join(" ")} The slot stays claimed, so run "slotenv down" again once that is fixed.`,
     );
   }
   let env: EnvConfig | undefined;

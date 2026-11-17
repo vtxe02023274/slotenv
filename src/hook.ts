@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 
 export const HOOK_NAME = "post-checkout";
-const START = "# >>> nocollide >>>";
-const END = "# <<< nocollide <<<";
+const START = "# >>> slotenv >>>";
+const END = "# <<< slotenv <<<";
 
 export const HOOK_BLOCK = [
   START,
@@ -13,10 +13,10 @@ export const HOOK_BLOCK = [
   "  *[!0]*) ;;",
   "  *)",
   '    if [ "$3" = "1" ]; then',
-  "      if command -v nocollide >/dev/null 2>&1; then",
-  "        nocollide up || true",
+  "      if command -v slotenv >/dev/null 2>&1; then",
+  "        slotenv up || true",
   "      else",
-  "        npx --yes nocollide up || true",
+  "        npx --yes slotenv up || true",
   "      fi",
   "    fi",
   "    ;;",
@@ -24,7 +24,17 @@ export const HOOK_BLOCK = [
   END,
 ].join("\n");
 
-const BLOCK_PATTERN = new RegExp(`${START.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${END}\\n?`);
+const LEGACY_START = "# >>> nocollide >>>";
+const LEGACY_END = "# <<< nocollide <<<";
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const BLOCK_PATTERN = new RegExp(
+  `(?:${escape(START)}[\\s\\S]*?${escape(END)}|${escape(LEGACY_START)}[\\s\\S]*?${escape(LEGACY_END)})\\n?`,
+  "g",
+);
+
+function hasBlock(content: string): boolean {
+  return content.includes(START) || content.includes(LEGACY_START);
+}
 
 export interface HookLocation {
   file: string;
@@ -36,7 +46,7 @@ export function hookLocation(cwd: string): HookLocation {
   try {
     dir = execFileSync("git", ["rev-parse", "--git-path", "hooks"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch {
-    throw new NocollideError("Not inside a git worktree.");
+    throw new SlotenvError("Not inside a git worktree.");
   }
   const hooks = resolve(cwd, dir);
   if (basename(hooks) === "_" && basename(dirname(hooks)) === ".husky") {
@@ -51,7 +61,7 @@ export function hookPath(cwd: string): string {
 
 export function hookInstalled(cwd: string): boolean {
   const file = hookPath(cwd);
-  return existsSync(file) && readFileSync(file, "utf8").includes(START);
+  return existsSync(file) && hasBlock(readFileSync(file, "utf8"));
 }
 
 function insertAfterShebang(content: string): string {
@@ -72,11 +82,11 @@ export function installHook(cwd: string): { file: string; updated: boolean; appe
   const current = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   const shebang = current.startsWith("#!") ? (current.split("\n", 1)[0] ?? "") : "";
   if (shebang && !/\b(sh|bash|zsh|dash)\b/.test(shebang)) {
-    throw new NocollideError(
-      `${file} is not a shell script (${shebang}). Add "nocollide up" to it yourself, or remove it and run "nocollide hook install" again.`,
+    throw new SlotenvError(
+      `${file} is not a shell script (${shebang}). Add "slotenv up" to it yourself, or remove it and run "slotenv hook install" again.`,
     );
   }
-  const updated = current.includes(START);
+  const updated = hasBlock(current);
   const without = current.replace(BLOCK_PATTERN, "");
   const base = shebang || husky ? without : `#!/bin/sh\n${without}`;
   writeFileSync(file, insertAfterShebang(base));
@@ -88,7 +98,7 @@ export function uninstallHook(cwd: string): { file: string; removed: boolean; de
   const file = hookPath(cwd);
   if (!existsSync(file)) return { file, removed: false, deleted: false };
   const current = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-  if (!current.includes(START)) return { file, removed: false, deleted: false };
+  if (!hasBlock(current)) return { file, removed: false, deleted: false };
   const rest = current.replace(BLOCK_PATTERN, "");
   if (/^(#![^\n]*)?\s*$/.test(rest)) {
     rmSync(file);

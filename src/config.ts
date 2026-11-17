@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 
 export interface EnvConfig {
   from?: string;
@@ -43,7 +43,16 @@ export interface Config {
   compose?: ComposeConfig;
 }
 
-export const CONFIG_FILE = "nocollide.json";
+export const CONFIG_FILE = "slotenv.json";
+export const LEGACY_CONFIG_FILE = "nocollide.json";
+
+export function configPath(root: string): string | undefined {
+  for (const name of [CONFIG_FILE, LEGACY_CONFIG_FILE]) {
+    const file = join(root, name);
+    if (existsSync(file)) return file;
+  }
+  return undefined;
+}
 export const DEFAULT_STEP = 10;
 
 const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
@@ -53,8 +62,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function invalid(reason: string): NocollideError {
-  return new NocollideError(`Invalid ${CONFIG_FILE}: ${reason}.`);
+function invalid(reason: string): SlotenvError {
+  return new SlotenvError(`Invalid ${CONFIG_FILE}: ${reason}.`);
 }
 
 function isUrl(value: unknown, schemes: string[]): value is string {
@@ -164,9 +173,9 @@ export function parseConfig(raw: unknown): Config {
 }
 
 export function loadConfig(root: string): Config {
-  const file = join(root, CONFIG_FILE);
-  if (!existsSync(file)) {
-    throw new NocollideError(`No ${CONFIG_FILE} in ${root}. Run "nocollide init" first.`);
+  const file = configPath(root);
+  if (!file) {
+    throw new SlotenvError(`No ${CONFIG_FILE} in ${root}. Run "slotenv init" first.`);
   }
   let raw: unknown;
   try {

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { down, gc, init, list, up } from "./core.js";
 import { doctor } from "./doctor.js";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 import { redact } from "./redact.js";
 import { isIgnored } from "./git.js";
 import { installHook, uninstallHook } from "./hook.js";
@@ -13,21 +13,21 @@ import { formatVars, parseShell } from "./shell.js";
 const version = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string })
   .version;
 
-const HELP = `nocollide ${version}
+const HELP = `slotenv ${version}
 Run parallel coding agents without collisions.
 
 Usage:
-  nocollide init [--force]        Create nocollide.json for this repository
-  nocollide up [--force]          Claim a slot for this worktree and write its env file
-  nocollide down [--keep-data]    Release the slot of this worktree and drop its databases
-  nocollide ls [--json]           List the slots of this repository
-  nocollide gc [--keep-data]      Release slots whose worktree was deleted
-  nocollide port <NAME>           Print one port of this worktree
-  nocollide run -- <command...>   Run a command with the slot variables set
-  nocollide env [--shell <name>]  Print the slot variables: sh, powershell, cmd or json
-  nocollide hook install          Run "nocollide up" automatically for new worktrees
-  nocollide hook uninstall        Remove that hook
-  nocollide doctor                Check the setup and say what to fix
+  slotenv init [--force]        Create slotenv.json for this repository
+  slotenv up [--force]          Claim a slot for this worktree and write its env file
+  slotenv down [--keep-data]    Release the slot of this worktree and drop its databases
+  slotenv ls [--json]           List the slots of this repository
+  slotenv gc [--keep-data]      Release slots whose worktree was deleted
+  slotenv port <NAME>           Print one port of this worktree
+  slotenv run -- <command...>   Run a command with the slot variables set
+  slotenv env [--shell <name>]  Print the slot variables: sh, powershell, cmd or json
+  slotenv hook install          Run "slotenv up" automatically for new worktrees
+  slotenv hook uninstall        Remove that hook
+  slotenv doctor                Check the setup and say what to fix
 
 Options:
   -h, --help      Show this help
@@ -57,7 +57,7 @@ function quoteWindows(arg: string): string {
 function runCommand(command: string[], vars: Record<string, string>): Promise<number> {
   const env = { ...process.env, ...vars };
   const [file, ...args] = command;
-  if (!file) throw new NocollideError('Nothing to run. Usage: nocollide run -- <command...>');
+  if (!file) throw new SlotenvError('Nothing to run. Usage: slotenv run -- <command...>');
   const child =
     process.platform === "win32"
       ? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${command.map(quoteWindows).join(" ")}"`], {
@@ -81,7 +81,7 @@ function runCommand(command: string[], vars: Record<string, string>): Promise<nu
     };
     child.once("error", (error) => {
       cleanup();
-      reject(new NocollideError(`Could not start ${file}: ${error.message}`));
+      reject(new SlotenvError(`Could not start ${file}: ${error.message}`));
     });
     child.once("exit", (code, signal) => {
       cleanup();
@@ -131,11 +131,11 @@ async function main(argv: string[]): Promise<number> {
       console.log(`Wrote ${relative(cwd, file) || file}.`);
       const framework = detection.framework;
       if (framework && !framework.readsPort && "PORT" in config.ports) {
-        console.log(`${framework.name} does not read PORT by itself: ${framework.hint}, or use "nocollide run".`);
+        console.log(`${framework.name} does not read PORT by itself: ${framework.hint}, or use "slotenv run".`);
       }
       if (detection.hardcoded.length > 0) {
         console.log(
-          `These scripts hard-code a port: ${detection.hardcoded.join(", ")}. Make them read the variable instead, or start them with "nocollide run -- <command>".`,
+          `These scripts hard-code a port: ${detection.hardcoded.join(", ")}. Make them read the variable instead, or start them with "slotenv run -- <command>".`,
         );
       }
       const envTo = config.env?.to;
@@ -179,7 +179,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       if (rows.length === 0) {
-        console.log('No slots claimed in this repository. Run "nocollide up" in a worktree.');
+        console.log('No slots claimed in this repository. Run "slotenv up" in a worktree.');
         return 0;
       }
       const width = Math.max(...rows.map((row) => row.root.length), "WORKTREE".length);
@@ -200,11 +200,11 @@ async function main(argv: string[]): Promise<number> {
     }
     case "port": {
       const name = positional[0];
-      if (!name) throw new NocollideError("Usage: nocollide port <NAME>");
+      if (!name) throw new SlotenvError("Usage: slotenv port <NAME>");
       const claim = await up(cwd, { writeEnv: false });
       const port = claim.ports[name];
       if (port === undefined) {
-        throw new NocollideError(`Unknown port "${name}". Known: ${Object.keys(claim.ports).join(", ")}`);
+        throw new SlotenvError(`Unknown port "${name}". Known: ${Object.keys(claim.ports).join(", ")}`);
       }
       process.stdout.write(`${port}\n`);
       return 0;
@@ -224,17 +224,17 @@ async function main(argv: string[]): Promise<number> {
       const action = positional[0];
       if (action === "install") {
         const result = installHook(cwd);
-        const how = result.updated ? "Updated" : result.appended ? "Added nocollide to the existing" : "Installed";
-        console.log(`${how} ${result.file}. New worktrees now run "nocollide up" when git creates them.`);
+        const how = result.updated ? "Updated" : result.appended ? "Added slotenv to the existing" : "Installed";
+        console.log(`${how} ${result.file}. New worktrees now run "slotenv up" when git creates them.`);
         return 0;
       }
       if (action === "uninstall") {
         const result = uninstallHook(cwd);
-        if (!result.removed) console.log("The nocollide hook is not installed.");
-        else console.log(result.deleted ? `Removed ${result.file}.` : `Removed the nocollide part of ${result.file}.`);
+        if (!result.removed) console.log("The slotenv hook is not installed.");
+        else console.log(result.deleted ? `Removed ${result.file}.` : `Removed the slotenv part of ${result.file}.`);
         return 0;
       }
-      throw new NocollideError("Usage: nocollide hook install | nocollide hook uninstall");
+      throw new SlotenvError("Usage: slotenv hook install | slotenv hook uninstall");
     }
     case "doctor": {
       const checks = await doctor(cwd);
@@ -243,7 +243,7 @@ async function main(argv: string[]): Promise<number> {
       return checks.some((check) => check.level === "fail") ? 1 : 0;
     }
     default:
-      throw new NocollideError(`Unknown command "${command}". Run "nocollide --help".`);
+      throw new SlotenvError(`Unknown command "${command}". Run "slotenv --help".`);
   }
 }
 
@@ -252,8 +252,8 @@ main(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (error: unknown) => {
-    if (error instanceof NocollideError) {
-      console.error(`nocollide: ${redact(error.message)}`);
+    if (error instanceof SlotenvError) {
+      console.error(`slotenv: ${redact(error.message)}`);
     } else {
       console.error(error);
     }

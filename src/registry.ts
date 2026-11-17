@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CreatedDatabase } from "./databases.js";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 
 export interface SlotEntry {
   slot: number;
@@ -28,7 +28,11 @@ const TAKEOVER_STALE_MS = 5_000;
 const OWNER_FILE = "owner";
 
 export function homeDir(): string {
-  return process.env.NOCOLLIDE_HOME || join(homedir(), ".nocollide");
+  const explicit = process.env.SLOTENV_HOME || process.env.NOCOLLIDE_HOME;
+  if (explicit) return explicit;
+  const home = join(homedir(), ".slotenv");
+  const legacy = join(homedir(), ".nocollide");
+  return !existsSync(home) && existsSync(legacy) ? legacy : home;
 }
 
 function registryFile(dir: string): string {
@@ -43,7 +47,7 @@ function read(dir: string): Registry {
     if (data.version !== 1 || typeof data.repos !== "object" || data.repos === null) throw new Error("unknown format");
     return data;
   } catch (error) {
-    throw new NocollideError(`The slot registry ${file} is unreadable (${(error as Error).message}). Fix or delete it.`);
+    throw new SlotenvError(`The slot registry ${file} is unreadable (${(error as Error).message}). Fix or delete it.`);
   }
 }
 
@@ -123,7 +127,7 @@ async function acquire(lock: string, timeoutMs: number, what: string): Promise<s
       continue;
     }
     if (Date.now() > deadline) {
-      throw new NocollideError(`Timed out waiting for ${what} (${lock}). If no other nocollide command is running, delete that folder.`);
+      throw new SlotenvError(`Timed out waiting for ${what} (${lock}). If no other slotenv command is running, delete that folder.`);
     }
     await sleep(20 + Math.floor(Math.random() * 40));
   }

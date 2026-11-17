@@ -1,6 +1,6 @@
-export class NocollideError extends Error {
+export class SlotenvError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "NocollideError";
+    this.name = "SlotenvError";
   }
 }

@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 
 export interface MysqlRunner {
   query(url: string, sql: string): Promise<string>;
@@ -20,8 +20,8 @@ function connection(url: string): Connection {
   return { args, env };
 }
 
-function missing(command: string): NocollideError {
-  return new NocollideError(`${command} was not found. Install the MySQL client tools and make sure ${command} is on your PATH.`);
+function missing(command: string): SlotenvError {
+  return new SlotenvError(`${command} was not found. Install the MySQL client tools and make sure ${command} is on your PATH.`);
 }
 
 function query(url: string, sql: string): Promise<string> {
@@ -30,7 +30,7 @@ function query(url: string, sql: string): Promise<string> {
     execFile("mysql", [...args, "-N", "-B", "-e", sql], { env, encoding: "utf8", windowsHide: true }, (error, stdout, stderr) => {
       if (!error) return resolve(stdout.trim());
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return reject(missing("mysql"));
-      reject(new NocollideError(`mysql failed: ${(stderr || error.message).trim()}`));
+      reject(new SlotenvError(`mysql failed: ${(stderr || error.message).trim()}`));
     });
   });
 }
@@ -48,22 +48,22 @@ function copy(from: string, to: string): Promise<void> {
     let errors = "";
     let pending = 2;
     let failed = false;
-    const fail = (error: NocollideError) => {
+    const fail = (error: SlotenvError) => {
       if (failed) return;
       failed = true;
       dump.kill();
       load.kill();
       reject(error);
     };
-    dump.on("error", (error: NodeJS.ErrnoException) => fail(error.code === "ENOENT" ? missing("mysqldump") : new NocollideError(error.message)));
-    load.on("error", (error: NodeJS.ErrnoException) => fail(error.code === "ENOENT" ? missing("mysql") : new NocollideError(error.message)));
+    dump.on("error", (error: NodeJS.ErrnoException) => fail(error.code === "ENOENT" ? missing("mysqldump") : new SlotenvError(error.message)));
+    load.on("error", (error: NodeJS.ErrnoException) => fail(error.code === "ENOENT" ? missing("mysql") : new SlotenvError(error.message)));
     dump.stderr.on("data", (chunk) => (errors += chunk));
     load.stderr.on("data", (chunk) => (errors += chunk));
     load.stdin.on("error", () => undefined);
     dump.stdout.on("error", () => undefined);
     dump.stdout.pipe(load.stdin);
     const done = (name: string) => (code: number | null) => {
-      if (code !== 0) return fail(new NocollideError(`${name} failed: ${errors.trim() || `exit code ${code}`}`));
+      if (code !== 0) return fail(new SlotenvError(`${name} failed: ${errors.trim() || `exit code ${code}`}`));
       pending -= 1;
       if (pending === 0 && !failed) resolve();
     };

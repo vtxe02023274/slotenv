@@ -1,4 +1,4 @@
-import { NocollideError } from "./errors.js";
+import { SlotenvError } from "./errors.js";
 
 export type ShellKind = "sh" | "powershell" | "cmd" | "json";
 
@@ -9,7 +9,7 @@ export function parseShell(value: string | undefined): ShellKind {
   if (["powershell", "pwsh", "ps"].includes(normalized)) return "powershell";
   if (normalized === "cmd") return "cmd";
   if (normalized === "json") return "json";
-  throw new NocollideError(`Unknown shell "${value}". Use sh, powershell, cmd or json.`);
+  throw new SlotenvError(`Unknown shell "${value}". Use sh, powershell, cmd or json.`);
 }
 
 export function formatVars(vars: Record<string, string>, shell: ShellKind): string {

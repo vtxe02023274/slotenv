@@ -32,6 +32,26 @@ test("run passes the slot variables to the command and port prints one port", as
   assert.equal(exit.code, 7);
 });
 
+test("up hides database passwords and keeps sqlite paths as written", async (t) => {
+  const box = sandbox({
+    "nocollide.json": config(
+      { WEB_PORT: randomBase() },
+      {
+        databases: {
+          CACHE_URL: { kind: "redis", url: "redis://user:hunter2@localhost:6379/0" },
+          LITE_URL: { kind: "sqlite", path: "file:./dev.db" },
+        },
+      },
+    ),
+  });
+  t.after(box.cleanup);
+  const result = await runCli(addWorktree(box, "secret"), ["up"], box.home);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /CACHE_URL=redis:\/\/user:\*\*\*@localhost:6379\/1/);
+  assert.match(result.stdout, /LITE_URL=file:\.\/dev\.db/);
+  assert.doesNotMatch(result.stdout, /hunter2/);
+});
+
 test("errors are short and exit with code 1", async (t) => {
   const box = sandbox();
   t.after(box.cleanup);

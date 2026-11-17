@@ -60,7 +60,7 @@ test("down frees the slot and removes the generated env file", async (t) => {
   assert.equal(existsSync(join(a, ".env.local")), false);
   const c = addWorktree(box, "c");
   assert.equal((await up(c)).slot, 1);
-  assert.deepEqual(await down(a), {});
+  assert.deepEqual(await down(a), { droppedDatabases: [], keptDatabases: [] });
 });
 
 test("an env file that nocollide did not write is never overwritten without force", async (t) => {
@@ -95,7 +95,7 @@ test("ls lists slots and gc releases deleted worktrees", async (t) => {
       [2, true, true],
     ],
   );
-  const removed = await gc();
+  const { removed } = await gc();
   assert.deepEqual(
     removed.map((entry) => entry.slot),
     [1],

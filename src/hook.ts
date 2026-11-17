@@ -16,7 +16,7 @@ export const HOOK_BLOCK = [
   "      if command -v slotenv >/dev/null 2>&1; then",
   "        slotenv up || true",
   "      else",
-  "        npx --yes slotenv-cli up || true",
+  "        npx --yes nocollide up || true",
   "      fi",
   "    fi",
   "    ;;",

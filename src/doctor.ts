@@ -89,6 +89,15 @@ export async function doctor(cwd: string): Promise<Check[]> {
     );
   }
 
+  if (kinds.has("mysql")) {
+    const tools = ["mysql", "mysqldump"].filter((tool) => !hasCommand(tool));
+    checks.push(
+      tools.length === 0
+        ? { level: "ok", message: "mysql and mysqldump are on the PATH" }
+        : { level: "fail", message: `MySQL databases need ${tools.join(" and ")} on the PATH. Install the MySQL client tools.` },
+    );
+  }
+
   checks.push(
     hookInstalled(worktree.root)
       ? { level: "ok", message: "post-checkout hook runs \"nocollide up\" for new worktrees" }

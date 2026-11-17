@@ -82,6 +82,9 @@ function detectDatabase(value: string): DatabaseConfig | undefined {
   if (url && (url.protocol === "postgres:" || url.protocol === "postgresql:") && url.pathname.length > 1) {
     return { kind: "postgres", url: value, template: true };
   }
+  if (url && (url.protocol === "mysql:" || url.protocol === "mariadb:") && url.pathname.length > 1) {
+    return { kind: "mysql", url: value, template: true };
+  }
   if (url && (url.protocol === "redis:" || url.protocol === "rediss:") && /^\/?\d*$/.test(url.pathname)) {
     return { kind: "redis", url: value };
   }

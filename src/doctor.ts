@@ -1,0 +1,112 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { CONFIG_FILE, loadConfig, type Config } from "./config.js";
+import { currentWorktree, isIgnored, mainWorktreeRoot } from "./git.js";
+import { hookInstalled } from "./hook.js";
+import { pathKey } from "./paths.js";
+import { withRegistry } from "./registry.js";
+
+export type CheckLevel = "ok" | "warn" | "fail";
+
+export interface Check {
+  level: CheckLevel;
+  message: string;
+}
+
+const MIN_GIT: [number, number] = [2, 31];
+
+function hasCommand(command: string): boolean {
+  try {
+    execFileSync(command, ["--version"], { stdio: "ignore", windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function gitVersion(): [number, number] | undefined {
+  try {
+    const output = execFileSync("git", ["--version"], { encoding: "utf8" });
+    const match = /(\d+)\.(\d+)/.exec(output);
+    return match ? [Number(match[1]), Number(match[2])] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function doctor(cwd: string): Promise<Check[]> {
+  const checks: Check[] = [];
+  const version = gitVersion();
+  if (!version) {
+    checks.push({ level: "fail", message: "git was not found on the PATH." });
+    return checks;
+  }
+  const oldGit = version[0] < MIN_GIT[0] || (version[0] === MIN_GIT[0] && version[1] < MIN_GIT[1]);
+  checks.push(
+    oldGit
+      ? { level: "fail", message: `git ${version.join(".")} is too old. nocollide needs git ${MIN_GIT.join(".")} or newer.` }
+      : { level: "ok", message: `git ${version.join(".")}` },
+  );
+
+  let worktree;
+  try {
+    worktree = currentWorktree(cwd);
+  } catch {
+    checks.push({ level: "fail", message: "Not inside a git worktree." });
+    return checks;
+  }
+
+  const main = worktree.isMain ? worktree.root : mainWorktreeRoot(worktree.root);
+  const configRoot = [worktree.root, main].find((root) => root && existsSync(join(root, CONFIG_FILE)));
+  let config: Config | undefined;
+  if (!configRoot) {
+    checks.push({ level: "fail", message: `No ${CONFIG_FILE}. Run "nocollide init".` });
+  } else {
+    try {
+      config = loadConfig(configRoot);
+      const where = configRoot === worktree.root ? "" : " (from the main worktree; commit it so every branch has it)";
+      checks.push({ level: configRoot === worktree.root ? "ok" : "warn", message: `${CONFIG_FILE} is valid${where}` });
+    } catch (error) {
+      checks.push({ level: "fail", message: (error as Error).message });
+    }
+  }
+
+  if (config?.env) {
+    checks.push(
+      isIgnored(worktree.root, config.env.to)
+        ? { level: "ok", message: `${config.env.to} is ignored by git` }
+        : { level: "warn", message: `${config.env.to} is not in .gitignore, so slot values could be committed.` },
+    );
+  }
+
+  const kinds = new Set(Object.values(config?.databases ?? {}).map((db) => db.kind));
+  if (kinds.has("postgres")) {
+    checks.push(
+      hasCommand("psql")
+        ? { level: "ok", message: "psql is on the PATH" }
+        : { level: "fail", message: "Postgres databases need psql on the PATH. Install the Postgres client tools." },
+    );
+  }
+
+  checks.push(
+    hookInstalled(worktree.root)
+      ? { level: "ok", message: "post-checkout hook runs \"nocollide up\" for new worktrees" }
+      : { level: "warn", message: 'No hook yet. Run "nocollide hook install" so new worktrees get a slot automatically.' },
+  );
+
+  const repo = pathKey(worktree.repo);
+  const here = pathKey(worktree.root);
+  const slots = await withRegistry((registry) => Object.entries(registry.repos[repo] ?? {}));
+  const missing = slots.filter(([, entry]) => !existsSync(entry.root));
+  if (missing.length > 0) {
+    checks.push({ level: "warn", message: `${missing.length} slot(s) belong to deleted worktrees. Run "nocollide gc".` });
+  }
+  const mine = slots.find(([id]) => id === here)?.[1];
+  checks.push(
+    mine
+      ? { level: "ok", message: `This worktree has slot ${mine.slot}` }
+      : { level: "warn", message: 'This worktree has no slot yet. Run "nocollide up".' },
+  );
+  return checks;
+}

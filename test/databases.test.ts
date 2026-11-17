@@ -6,6 +6,7 @@ import { parseConfig } from "../src/config.js";
 import { down, gc, init, up } from "../src/core.js";
 import { composeProjectName, slotDatabaseValue } from "../src/databases.js";
 import { detectPorts } from "../src/detect.js";
+import { setMysqlRunner } from "../src/mysql.js";
 import { setPsqlRunner } from "../src/postgres.js";
 import { addWorktree, freeBase, removeWorktree, sandbox } from "./helpers.js";
 
@@ -209,4 +210,106 @@ test("postgres against a real server", { skip: realPostgres ? false : "set NOCOL
   assert.equal(psql(base, "SELECT count(*) FROM items"), "2");
   await down(worktree);
   assert.equal(psql(admin.toString(), `SELECT count(*) FROM pg_database WHERE datname = '${name}_s1'`), "0");
+});
+
+test("mysql: each slot gets a copy of the main database and down drops it", async (t) => {
+  const databases = new Set(["shop"]);
+  const copies: string[] = [];
+  setMysqlRunner({
+    async query(_url, sql) {
+      const exists = /SCHEMA_NAME = '(.+)'$/.exec(sql);
+      if (exists?.[1]) return databases.has(exists[1]) ? "1" : "";
+      const create = /^CREATE DATABASE `(.+)`$/.exec(sql);
+      if (create?.[1]) {
+        databases.add(create[1]);
+        return "";
+      }
+      const drop = /^DROP DATABASE IF EXISTS `(.+)`$/.exec(sql);
+      if (drop?.[1]) {
+        databases.delete(drop[1]);
+        return "";
+      }
+      throw new Error(`unexpected sql: ${sql}`);
+    },
+    async copy(from, to) {
+      copies.push(`${new URL(from).pathname} -> ${new URL(to).pathname}`);
+    },
+  });
+  t.after(() => setMysqlRunner(undefined));
+  const box = sandbox({
+    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root:pw@127.0.0.1:3306/shop" } } }),
+  });
+  t.after(box.cleanup);
+  const worktree = addWorktree(box, "my");
+  const claim = await up(worktree);
+  assert.equal(claim.vars.DATABASE_URL, "mysql://root:pw@127.0.0.1:3306/shop_s1");
+  assert.deepEqual(copies, ["/shop -> /shop_s1"]);
+  assert.ok(databases.has("shop_s1"));
+  assert.deepEqual((await up(worktree)).createdDatabases, []);
+  await down(worktree);
+  assert.equal(databases.has("shop_s1"), false);
+  assert.ok(databases.has("shop"));
+});
+
+test("mysql: a failed copy removes the half-made database", async (t) => {
+  const databases = new Set<string>();
+  setMysqlRunner({
+    async query(_url, sql) {
+      if (sql.startsWith("SELECT")) return "";
+      const name = /`(.+)`/.exec(sql)?.[1] ?? "";
+      if (sql.startsWith("CREATE")) databases.add(name);
+      if (sql.startsWith("DROP")) databases.delete(name);
+      return "";
+    },
+    async copy() {
+      throw new Error("mysqldump failed: Unknown database 'shop'");
+    },
+  });
+  t.after(() => setMysqlRunner(undefined));
+  const box = sandbox({
+    "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root@localhost/shop" } } }),
+  });
+  t.after(box.cleanup);
+  await assert.rejects(up(addWorktree(box, "broken")), /Unknown database/);
+  assert.equal(databases.size, 0);
+});
+
+const realMysql = process.env.NOCOLLIDE_TEST_MYSQL_URL;
+
+test("mysql against a real server", { skip: realMysql ? false : "set NOCOLLIDE_TEST_MYSQL_URL to run" }, async (t) => {
+  const base = realMysql!;
+  const { execFileSync } = await import("node:child_process");
+  const parsed = new URL(base);
+  const name = parsed.pathname.slice(1);
+  const sql = (statement: string, database = "") =>
+    execFileSync(
+      "mysql",
+      ["--protocol=TCP", "-h", parsed.hostname, "-P", parsed.port || "3306", "-u", parsed.username, "-N", "-B", ...(database ? [database] : []), "-e", statement],
+      { encoding: "utf8", env: { ...process.env, MYSQL_PWD: decodeURIComponent(parsed.password) } },
+    ).trim();
+  sql(`DROP DATABASE IF EXISTS \`${name}_s1\``);
+  sql(`DROP DATABASE IF EXISTS \`${name}\``);
+  sql(`CREATE DATABASE \`${name}\``);
+  sql("CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2);", name);
+
+  const box = sandbox({ "nocollide.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: base } } }) });
+  t.after(box.cleanup);
+  const worktree = addWorktree(box, "mysql");
+  await up(worktree);
+  assert.equal(sql("SELECT count(*) FROM items", `${name}_s1`), "2");
+  sql("INSERT INTO items VALUES (3)", `${name}_s1`);
+  assert.equal(sql("SELECT count(*) FROM items", name), "2");
+  await down(worktree);
+  assert.equal(sql(`SELECT count(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${name}_s1'`), "0");
+});
+
+test("init detects MySQL and MariaDB URLs", (t) => {
+  const box = sandbox({
+    ".env.example": "DATABASE_URL=mysql://root:root@localhost:3306/shop\nLEGACY_DB=mariadb://localhost/legacy\n",
+  });
+  t.after(box.cleanup);
+  assert.deepEqual(detectPorts(box.repo).databases, {
+    DATABASE_URL: { kind: "mysql", url: "mysql://root:root@localhost:3306/shop", template: true },
+    LEGACY_DB: { kind: "mysql", url: "mariadb://localhost/legacy", template: true },
+  });
 });

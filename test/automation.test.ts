@@ -27,14 +27,14 @@ test("hook install keeps an existing hook and respects core.hooksPath", (t) => {
   execFileSync("git", ["config", "core.hooksPath", ".githooks"], { cwd: box.repo });
   mkdirSync(join(box.repo, ".githooks"));
   const file = join(box.repo, ".githooks", "post-checkout");
-  writeFileSync(file, "#!/usr/bin/env bash\necho mine\n");
+  writeFileSync(file, "#!/usr/bin/env bash\necho mine\nexit 0\n");
   assert.equal(hookPath(box.repo), file);
   assert.equal(installHook(box.repo).appended, true);
-  const content = readFileSync(file, "utf8");
-  assert.ok(content.startsWith("#!/usr/bin/env bash\necho mine\n"));
-  assert.ok(content.includes(HOOK_BLOCK));
+  assert.equal(readFileSync(file, "utf8"), `#!/usr/bin/env bash\n${HOOK_BLOCK}\necho mine\nexit 0\n`);
+  assert.equal(installHook(box.repo).updated, true);
+  assert.equal(readFileSync(file, "utf8"), `#!/usr/bin/env bash\n${HOOK_BLOCK}\necho mine\nexit 0\n`);
   assert.deepEqual(uninstallHook(box.repo), { file, removed: true, deleted: false });
-  assert.equal(readFileSync(file, "utf8"), "#!/usr/bin/env bash\necho mine\n");
+  assert.equal(readFileSync(file, "utf8"), "#!/usr/bin/env bash\necho mine\nexit 0\n");
 
   writeFileSync(file, "#!/usr/bin/env node\nconsole.log(1)\n");
   assert.throws(() => installHook(box.repo), /not a shell script/);

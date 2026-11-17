@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -9,6 +10,7 @@ export interface SlotEntry {
   slot: number;
   root: string;
   gitDir?: string;
+  token?: string;
   ports: Record<string, number>;
   claimedAt: string;
   databases?: CreatedDatabase[];
@@ -19,8 +21,10 @@ export interface Registry {
   repos: Record<string, Record<string, SlotEntry>>;
 }
 
-const REGISTRY_TIMEOUT_MS = 15_000;
-const STALE_LOCK_MS = 10_000;
+const REGISTRY_TIMEOUT_MS = 45_000;
+const STALE_LOCK_MS = 30_000;
+const HEARTBEAT_MS = 5_000;
+const TAKEOVER_STALE_MS = 5_000;
 const OWNER_FILE = "owner";
 
 export function homeDir(): string {
@@ -59,32 +63,60 @@ function processAlive(pid: number): boolean {
   }
 }
 
-function isStale(lock: string): boolean {
-  let owner: number | undefined;
-  try {
-    owner = Number(readFileSync(join(lock, OWNER_FILE), "utf8"));
-  } catch {
-    owner = undefined;
-  }
-  if (owner && Number.isInteger(owner) && owner !== process.pid) return !processAlive(owner);
-  return Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS;
+function ageOf(path: string): number {
+  return Date.now() - statSync(path).mtimeMs;
 }
 
-async function acquire(lock: string, timeoutMs: number, what: string): Promise<void> {
+function readOwner(lock: string): { pid: number; token: string } | undefined {
+  try {
+    const [pid, token] = readFileSync(join(lock, OWNER_FILE), "utf8").trim().split(" ");
+    return pid && token ? { pid: Number(pid), token } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isStale(lock: string): boolean {
+  const owner = readOwner(lock);
+  if (!owner) return ageOf(lock) > STALE_LOCK_MS;
+  if (owner.pid !== process.pid && !processAlive(owner.pid)) return true;
+  return ageOf(join(lock, OWNER_FILE)) > STALE_LOCK_MS;
+}
+
+function takeOver(lock: string): void {
+  const guard = `${lock}.takeover`;
+  try {
+    mkdirSync(guard);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (ageOf(guard) > TAKEOVER_STALE_MS) rmSync(guard, { recursive: true, force: true });
+    return;
+  }
+  try {
+    if (existsSync(lock) && isStale(lock)) {
+      const taken = `${lock}.stale-${process.pid}-${randomBytes(4).toString("hex")}`;
+      renameSync(lock, taken);
+      rmSync(taken, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(guard, { recursive: true, force: true });
+  }
+}
+
+async function acquire(lock: string, timeoutMs: number, what: string): Promise<string> {
   const deadline = Date.now() + timeoutMs;
+  const token = randomBytes(8).toString("hex");
   for (;;) {
     try {
       mkdirSync(lock);
-      writeFileSync(join(lock, OWNER_FILE), String(process.pid));
-      return;
+      writeFileSync(join(lock, OWNER_FILE), `${process.pid} ${token}`);
+      return token;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
     try {
       if (isStale(lock)) {
-        const taken = `${lock}.stale-${process.pid}-${Math.random().toString(36).slice(2)}`;
-        renameSync(lock, taken);
-        rmSync(taken, { recursive: true, force: true });
+        takeOver(lock);
         continue;
       }
     } catch {
@@ -97,15 +129,27 @@ async function acquire(lock: string, timeoutMs: number, what: string): Promise<v
   }
 }
 
+function release(lock: string, token: string): void {
+  if (readOwner(lock)?.token === token) rmSync(lock, { recursive: true, force: true });
+}
+
 export async function withLock<T>(name: string, timeoutMs: number, what: string, work: () => Promise<T>): Promise<T> {
   const dir = homeDir();
   mkdirSync(dir, { recursive: true });
   const lock = join(dir, `${name}.lock`);
-  await acquire(lock, timeoutMs, what);
+  const token = await acquire(lock, timeoutMs, what);
+  const heartbeat = setInterval(() => {
+    try {
+      const now = new Date();
+      utimesSync(join(lock, OWNER_FILE), now, now);
+    } catch {}
+  }, HEARTBEAT_MS);
+  heartbeat.unref();
   try {
     return await work();
   } finally {
-    rmSync(lock, { recursive: true, force: true });
+    clearInterval(heartbeat);
+    release(lock, token);
   }
 }
 

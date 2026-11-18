@@ -1,6 +1,6 @@
 {
   "name": "nocollide",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Run parallel coding agents without collisions: each git worktree gets its own ports, .env, Postgres, MySQL, SQLite or Redis database and Compose project. No containers.",
   "type": "module",
   "bin": {

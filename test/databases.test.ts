@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { parseConfig } from "../src/config.js";
-import { down, gc, init, up } from "../src/core.js";
+import { down, gc, init, list, up } from "../src/core.js";
 import { composeProjectName, slotDatabaseValue } from "../src/databases.js";
 import { detectPorts } from "../src/detect.js";
-import { setMysqlRunner } from "../src/mysql.js";
-import { setPsqlRunner } from "../src/postgres.js";
+import { quoteName, setMysqlRunner } from "../src/mysql.js";
+import { quoteIdent, setPsqlRunner } from "../src/postgres.js";
 import { addWorktree, freeBase, removeWorktree, sandbox } from "./helpers.js";
 
 function fakePostgres(existing: string[] = ["app_dev"]) {
@@ -155,16 +157,32 @@ test("sqlite: the main worktree file is copied into new worktrees", async (t) =>
   });
   t.after(box.cleanup);
   mkdirSync(join(box.repo, "data"));
-  writeFileSync(join(box.repo, "data", "dev.db"), "seed");
+  const source = new DatabaseSync(join(box.repo, "data", "dev.db"));
+  try {
+    source.exec("CREATE TABLE data (value TEXT); INSERT INTO data VALUES ('seed')");
+  } finally {
+    source.close();
+  }
   const worktree = addWorktree(box, "lite");
   const claim = await up(worktree);
-  assert.deepEqual(claim.copied, [join(worktree, "data", "dev.db")]);
-  assert.equal(readFileSync(join(worktree, "data", "dev.db"), "utf8"), "seed");
-  writeFileSync(join(worktree, "data", "dev.db"), "changed");
+  const target = join(worktree, "data", "dev.db");
+  assert.deepEqual(claim.copied, [target]);
+  const copied = new DatabaseSync(target);
+  try {
+    assert.equal(copied.prepare("SELECT value FROM data").get()?.value, "seed");
+    copied.exec("UPDATE data SET value = 'changed'");
+  } finally {
+    copied.close();
+  }
   assert.deepEqual((await up(worktree)).copied, []);
-  assert.equal(readFileSync(join(box.repo, "data", "dev.db"), "utf8"), "seed");
   await down(worktree);
-  assert.ok(existsSync(join(worktree, "data", "dev.db")));
+  const original = new DatabaseSync(join(box.repo, "data", "dev.db"), { readOnly: true });
+  try {
+    assert.equal(original.prepare("SELECT value FROM data").get()?.value, "seed");
+  } finally {
+    original.close();
+  }
+  assert.ok(existsSync(target));
 });
 
 test("redis and compose variables reach the env file", async (t) => {
@@ -185,30 +203,64 @@ test("redis and compose variables reach the env file", async (t) => {
   assert.match(env, /^REDIS_URL=redis:\/\/localhost:6379\/16$/m);
 });
 
+function databaseFixture(server: string, quote: (name: string) => string, execute: (sql: string) => string) {
+  const url = new URL(server);
+  const name = `slotenv_test_${randomBytes(12).toString("hex")}`;
+  url.pathname = `/${name}`;
+  execute(`CREATE DATABASE ${quote(name)}`);
+  return { url: url.toString(), name, cleanup: () => { execute(`DROP DATABASE ${quote(name)}`); } };
+}
+
+test("database fixtures create unique databases and leave the URL database alone", () => {
+  for (const [server, quote] of [["postgres://localhost/dev", quoteIdent], ["mysql://localhost/dev", quoteName]] as const) {
+    const calls: string[] = [];
+    const execute = (sql: string) => { calls.push(sql); return ""; };
+    const first = databaseFixture(server, quote, execute);
+    const second = databaseFixture(server, quote, execute);
+    assert.notEqual(first.name, second.name);
+    assert.equal(new URL(first.url).pathname, `/${first.name}`);
+    first.cleanup();
+    second.cleanup();
+    assert.deepEqual(calls, [
+      `CREATE DATABASE ${quote(first.name)}`, `CREATE DATABASE ${quote(second.name)}`,
+      `DROP DATABASE ${quote(first.name)}`, `DROP DATABASE ${quote(second.name)}`,
+    ]);
+    const failed: string[] = [];
+    assert.throws(() => databaseFixture(server, quote, (sql) => {
+      failed.push(sql);
+      throw new Error("already exists");
+    }), /already exists/);
+    assert.equal(failed.length, 1);
+    assert.match(failed[0] ?? "", /^CREATE DATABASE /);
+  }
+});
+
 const realPostgres = process.env.SLOTENV_TEST_PG_URL;
 
 test("postgres against a real server", { skip: realPostgres ? false : "set SLOTENV_TEST_PG_URL to run" }, async (t) => {
-  const base = realPostgres!;
-  const admin = new URL(base);
+  const admin = new URL(realPostgres!);
+  if (admin.searchParams.has("dbname")) admin.searchParams.delete("dbname");
   admin.pathname = "/postgres";
   const { execFileSync } = await import("node:child_process");
   const psql = (url: string, sql: string) =>
     execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A", "-c", sql], { encoding: "utf8" }).trim();
-  const name = new URL(base).pathname.slice(1);
-  psql(admin.toString(), `DROP DATABASE IF EXISTS "${name}_s1"`);
-  psql(admin.toString(), `DROP DATABASE IF EXISTS "${name}"`);
-  psql(admin.toString(), `CREATE DATABASE "${name}"`);
+  const { url: base, name, cleanup } = databaseFixture(admin.toString(), quoteIdent, (sql) => psql(admin.toString(), sql));
+  t.after(cleanup);
   psql(base, "CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2)");
 
   const box = sandbox({ "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "postgres", url: base } } }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "pg");
-  const claim = await up(worktree);
-  const slotUrl = claim.vars.DATABASE_URL!;
-  assert.equal(psql(slotUrl, "SELECT count(*) FROM items"), "2");
-  psql(slotUrl, "INSERT INTO items VALUES (3)");
-  assert.equal(psql(base, "SELECT count(*) FROM items"), "2");
-  await down(worktree);
+  try {
+    const claim = await up(worktree);
+    const slotUrl = claim.createdDatabases[0];
+    assert.ok(slotUrl);
+    assert.equal(psql(slotUrl, "SELECT count(*) FROM items"), "2");
+    psql(slotUrl, "INSERT INTO items VALUES (3)");
+    assert.equal(psql(base, "SELECT count(*) FROM items"), "2");
+  } finally {
+    await down(worktree);
+  }
   assert.equal(psql(admin.toString(), `SELECT count(*) FROM pg_database WHERE datname = '${name}_s1'`), "0");
 });
 
@@ -253,53 +305,65 @@ test("mysql: each slot gets a copy of the main database and down drops it", asyn
 
 test("mysql: a failed copy removes the half-made database", async (t) => {
   const databases = new Set<string>();
-  setMysqlRunner({
-    async query(_url, sql) {
-      if (sql.startsWith("SELECT")) return "";
-      const name = /`(.+)`/.exec(sql)?.[1] ?? "";
-      if (sql.startsWith("CREATE")) databases.add(name);
-      if (sql.startsWith("DROP")) databases.delete(name);
-      return "";
-    },
-    async copy() {
-      throw new Error("mysqldump failed: Unknown database 'shop'");
-    },
-  });
-  t.after(() => setMysqlRunner(undefined));
   const box = sandbox({
     "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: "mysql://root@localhost/shop" } } }),
   });
   t.after(box.cleanup);
-  await assert.rejects(up(addWorktree(box, "broken")), /Unknown database/);
+  const worktree = addWorktree(box, "broken");
+  let failCreate = true;
+  setMysqlRunner({
+    async query(_url, sql) {
+      if (sql.startsWith("SELECT")) return "";
+      const name = /`(.+)`/.exec(sql)?.[1] ?? "";
+      if (sql.startsWith("CREATE")) {
+        assert.deepEqual((await list(worktree))[0]?.databases ?? [], []);
+        if (failCreate) throw new Error("could not create database");
+        databases.add(name);
+      }
+      if (sql.startsWith("DROP")) databases.delete(name);
+      return "";
+    },
+    async copy() {
+      assert.deepEqual((await list(worktree))[0]?.databases, [{ kind: "mysql", url: "mysql://root@localhost/shop_s1", pendingImport: true }]);
+      throw new Error("mysqldump failed: Unknown database 'shop'");
+    },
+  });
+  t.after(() => setMysqlRunner(undefined));
+  await assert.rejects(up(worktree), /could not create database/);
+  assert.deepEqual((await list(worktree))[0]?.databases ?? [], []);
+  failCreate = false;
+  await assert.rejects(up(worktree), /Unknown database/);
   assert.equal(databases.size, 0);
+  assert.deepEqual((await list(worktree))[0]?.databases ?? [], []);
 });
 
 const realMysql = process.env.SLOTENV_TEST_MYSQL_URL;
 
 test("mysql against a real server", { skip: realMysql ? false : "set SLOTENV_TEST_MYSQL_URL to run" }, async (t) => {
-  const base = realMysql!;
   const { execFileSync } = await import("node:child_process");
-  const parsed = new URL(base);
-  const name = parsed.pathname.slice(1);
+  const parsed = new URL(realMysql!);
   const sql = (statement: string, database = "") =>
     execFileSync(
       "mysql",
       ["--protocol=TCP", "-h", parsed.hostname, "-P", parsed.port || "3306", "-u", parsed.username, "-N", "-B", ...(database ? [database] : []), "-e", statement],
       { encoding: "utf8", env: { ...process.env, MYSQL_PWD: decodeURIComponent(parsed.password) } },
     ).trim();
-  sql(`DROP DATABASE IF EXISTS \`${name}_s1\``);
-  sql(`DROP DATABASE IF EXISTS \`${name}\``);
-  sql(`CREATE DATABASE \`${name}\``);
+  const { url: base, name, cleanup } = databaseFixture(realMysql!, quoteName, sql);
+  t.after(cleanup);
   sql("CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2);", name);
 
   const box = sandbox({ "slotenv.json": await dbConfig({ databases: { DATABASE_URL: { kind: "mysql", url: base } } }) });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "mysql");
-  await up(worktree);
-  assert.equal(sql("SELECT count(*) FROM items", `${name}_s1`), "2");
-  sql("INSERT INTO items VALUES (3)", `${name}_s1`);
-  assert.equal(sql("SELECT count(*) FROM items", name), "2");
-  await down(worktree);
+  try {
+    const claim = await up(worktree);
+    assert.deepEqual(claim.createdDatabases, [claim.vars.DATABASE_URL]);
+    assert.equal(sql("SELECT count(*) FROM items", `${name}_s1`), "2");
+    sql("INSERT INTO items VALUES (3)", `${name}_s1`);
+    assert.equal(sql("SELECT count(*) FROM items", name), "2");
+  } finally {
+    await down(worktree);
+  }
   assert.equal(sql(`SELECT count(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${name}_s1'`), "0");
 });
 

@@ -53,8 +53,8 @@ function read(dir: string): Registry {
 
 function write(dir: string, registry: Registry): void {
   const file = registryFile(dir);
-  const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(registry, null, 2)}\n`);
+  const temp = `${file}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   renameSync(temp, file);
 }
 
@@ -139,7 +139,7 @@ function release(lock: string, token: string): void {
 
 export async function withLock<T>(name: string, timeoutMs: number, what: string, work: () => Promise<T>): Promise<T> {
   const dir = homeDir();
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const lock = join(dir, `${name}.lock`);
   const token = await acquire(lock, timeoutMs, what);
   const heartbeat = setInterval(() => {

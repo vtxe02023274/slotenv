@@ -1,6 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPortFree } from "../src/ports.js";
@@ -14,11 +13,12 @@ export interface Sandbox {
   cleanup: () => void;
 }
 
-function git(cwd: string, args: string[]): void {
-  execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], {
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], {
     cwd,
-    stdio: "ignore",
-  });
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
 }
 
 const SLOTS_CHECKED = 10;
@@ -42,7 +42,7 @@ export async function freeBase(offsets: number[] = [0]): Promise<number> {
 }
 
 export function sandbox(files: Record<string, string> = {}): Sandbox {
-  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "slotenv-")));
+  const dir = realpathSync.native(mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), "slotenv-")));
   const repo = join(dir, "repo");
   const home = join(dir, "home");
   mkdirSync(repo);
@@ -53,7 +53,9 @@ export function sandbox(files: Record<string, string> = {}): Sandbox {
     writeFileSync(join(repo, name), content);
   }
   git(repo, ["add", "-A"]);
-  git(repo, ["commit", "-q", "-m", "init"]);
+  const tree = git(repo, ["write-tree"]);
+  const revision = git(repo, ["commit-tree", tree, "-m", "init"]);
+  git(repo, ["update-ref", "HEAD", revision]);
   process.env.SLOTENV_HOME = home;
   return { dir, repo, home, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }

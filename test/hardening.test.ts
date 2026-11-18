@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import childProcess, { ChildProcess, execFileSync } from "node:child_process";
+import fs, { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { down, gc, list, up } from "../src/core.js";
 import { HOOK_BLOCK, hookLocation, installHook } from "../src/hook.js";
 import { setMysqlRunner } from "../src/mysql.js";
-import { setPsqlRunner } from "../src/postgres.js";
+import { databaseExists, setPsqlRunner } from "../src/postgres.js";
 import { redact } from "../src/redact.js";
 import { homeDir, withRegistry } from "../src/registry.js";
-import { addWorktree, config, freeBase, runCli, sandbox } from "./helpers.js";
+import { addWorktree, config, freeBase, removeWorktree, runCli, sandbox } from "./helpers.js";
 
 function memoryPostgres(existing: string[]) {
   const databases = new Set(existing);
@@ -144,6 +146,57 @@ test("a moved worktree keeps its slot and gc leaves it alone", async (t) => {
   assert.equal(rows[0]?.current, true);
 });
 
+test("a replacement at a moved worktree's path has its own slot and database", async (t) => {
+  const pg = memoryPostgres(["app"]);
+  t.after(() => setPsqlRunner(undefined));
+  const box = sandbox({
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+  });
+  t.after(box.cleanup);
+  const original = addWorktree(box, "original");
+  await up(original);
+  const moved = join(box.dir, "moved");
+  execFileSync("git", ["worktree", "move", original, moved], { cwd: box.repo, stdio: "ignore" });
+  execFileSync("git", ["worktree", "add", "--detach", original], { cwd: box.repo, stdio: "ignore" });
+
+  assert.equal((await down(original)).slot, undefined);
+  assert.ok(pg.databases.has("app_s1"));
+  const replacement = await up(original);
+  assert.equal(replacement.slot, 2);
+  assert.deepEqual((await down(original)).droppedDatabases, ["postgres://localhost/app_s2"]);
+  assert.ok(pg.databases.has("app_s1"));
+  assert.match(readFileSync(join(moved, ".env.local"), "utf8"), /app_s1/);
+  assert.equal((await up(moved)).slot, 1);
+});
+
+test("gc preserves claims for locked worktrees and unavailable repositories", async (t) => {
+  const pg = memoryPostgres(["app"]);
+  t.after(() => setPsqlRunner(undefined));
+  const box = sandbox({
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+  });
+  t.after(box.cleanup);
+  const locked = addWorktree(box, "locked");
+  const unavailable = addWorktree(box, "unavailable");
+  await up(locked);
+  await up(unavailable);
+  execFileSync("git", ["worktree", "lock", "--reason", "removable", locked], { cwd: box.repo });
+  renameSync(locked, `${locked}-offline`);
+  assert.deepEqual((await gc()).removed, []);
+  assert.ok(pg.databases.has("app_s1"));
+
+  renameSync(unavailable, `${unavailable}-offline`);
+  renameSync(box.repo, `${box.repo}-offline`);
+  assert.deepEqual((await gc()).removed, []);
+  assert.ok(pg.databases.has("app_s2"));
+
+  renameSync(box.repo + "-offline", box.repo);
+  renameSync(`${locked}-offline`, locked);
+  execFileSync("git", ["worktree", "unlock", locked], { cwd: box.repo });
+  removeWorktree(box, locked);
+  assert.deepEqual((await gc()).droppedDatabases, ["postgres://localhost/app_s1", "postgres://localhost/app_s2"]);
+});
+
 test("Husky v9 hooks go into .husky/post-checkout", (t) => {
   const box = sandbox();
   t.after(box.cleanup);
@@ -188,18 +241,62 @@ test("a lock left by a dead process is taken over at once", async (t) => {
   assert.equal(existsSync(lock), false);
 });
 
-test("sqlite WAL files are copied along with the database", async (t) => {
+test("the registry directory and temporary file request private permissions", async (t) => {
+  const box = sandbox();
+  t.after(box.cleanup);
+  const mkdir = t.mock.method(fs, "mkdirSync");
+  const write = t.mock.method(fs, "writeFileSync");
+  syncBuiltinESMExports();
+  try {
+    const file = join(box.home, "slots.json");
+    await withRegistry(() => undefined);
+    const dir = mkdir.mock.calls.find(({ arguments: [path] }) => path === box.home);
+    const temp = write.mock.calls.find(({ arguments: [path] }) => String(path).startsWith(`${file}.`));
+    assert.equal((dir?.arguments[1] as fs.MakeDirectoryOptions | undefined)?.mode, 0o700);
+    assert.equal((temp?.arguments[2] as fs.WriteFileOptions & { mode?: number } | undefined)?.mode, 0o600);
+    if (process.platform !== "win32") {
+      assert.equal(statSync(box.home).mode & 0o077, 0);
+      assert.equal(statSync(file).mode & 0o077, 0);
+    }
+  } finally {
+    mkdir.mock.restore();
+    write.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test("a sqlite snapshot includes committed WAL rows even when the WAL is checkpointed", async (t) => {
   const box = sandbox({
     "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "sqlite", path: "db/dev.sqlite3" } } }),
     ".gitignore": "db/\n",
   });
   t.after(box.cleanup);
   mkdirSync(join(box.repo, "db"));
-  writeFileSync(join(box.repo, "db", "dev.sqlite3"), "main");
-  writeFileSync(join(box.repo, "db", "dev.sqlite3-wal"), "wal");
   const worktree = addWorktree(box, "wal");
-  await up(worktree);
-  assert.equal(readFileSync(join(worktree, "db", "dev.sqlite3-wal"), "utf8"), "wal");
+  const source = join(box.repo, "db", "dev.sqlite3");
+  const target = join(worktree, "db", "dev.sqlite3");
+  const db = new DatabaseSync(source);
+  const copyFile = fs.copyFileSync;
+  const copy = t.mock.method(fs, "copyFileSync", (from: fs.PathLike, to: fs.PathLike, mode?: number) => {
+    copyFile(from, to, mode);
+    if (from === source) db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  });
+  syncBuiltinESMExports();
+  try {
+    db.exec("CREATE TABLE items (id INTEGER); PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; INSERT INTO items VALUES (42)");
+    assert.ok(statSync(`${source}-wal`).size > 0);
+    await up(worktree);
+    const snapshot = new DatabaseSync(target);
+    try {
+      assert.equal(snapshot.prepare("SELECT id FROM items").get()?.id, 42);
+    } finally {
+      snapshot.close();
+    }
+  } finally {
+    copy.mock.restore();
+    syncBuiltinESMExports();
+    db.close();
+  }
 });
 
 test("redact hides passwords anywhere in a message", () => {
@@ -207,4 +304,29 @@ test("redact hides passwords anywhere in a message", () => {
     redact("failed for postgres://me:pw@h/db and redis://:secret@h:6379/1"),
     "failed for postgres://me:***@h/db and redis://:***@h:6379/1",
   );
+  assert.equal(
+    redact('failed for "postgresql://localhost/app?user=dev&password=one&%70assword=two&sslmode=require"'),
+    'failed for "postgresql://localhost/app?user=dev&password=***&%70assword=***&sslmode=require"',
+  );
+  assert.equal(redact("postgresql://localhost/app?password=one'two"), "postgresql://localhost/app?password=***");
+});
+
+test("psql gets the effective password through its environment", async (t) => {
+  const execute = t.mock.method(childProcess, "execFile", (...args: unknown[]) => {
+    (args[3] as (error: null, stdout: string, stderr: string) => void)(null, "1", "");
+    return new ChildProcess();
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await databaseExists("postgresql://dev:old@localhost/app?password=first&%70assword=a+b%26c&application_name=a%20b"), true);
+    assert.equal(await databaseExists("postgresql://dev:h%40st@localhost/app"), true);
+    const [query, userInfo] = execute.mock.calls;
+    assert.equal((query?.arguments[1] as string[])[0], "postgresql://dev@localhost/postgres?application_name=a%20b");
+    assert.equal((query?.arguments[2] as { env: NodeJS.ProcessEnv }).env.PGPASSWORD, "a+b&c");
+    assert.equal((userInfo?.arguments[1] as string[])[0], "postgresql://dev@localhost/postgres");
+    assert.equal((userInfo?.arguments[2] as { env: NodeJS.ProcessEnv }).env.PGPASSWORD, "h@st");
+  } finally {
+    execute.mock.restore();
+    syncBuiltinESMExports();
+  }
 });

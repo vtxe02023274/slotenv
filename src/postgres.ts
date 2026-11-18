@@ -6,10 +6,16 @@ export type PsqlRunner = (url: string, sql: string) => Promise<string>;
 function defaultRunner(url: string, sql: string): Promise<string> {
   const parsed = new URL(url);
   const env = { ...process.env };
-  if (parsed.password) {
-    env.PGPASSWORD = decodeURIComponent(parsed.password);
-    parsed.password = "";
-  }
+  let password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
+  parsed.password = "";
+  const params = parsed.search.slice(1).split("&").filter((param) => {
+    const equals = param.indexOf("=");
+    if (equals < 0 || !new URLSearchParams(param).has("password")) return true;
+    password = decodeURIComponent(param.slice(equals + 1));
+    return false;
+  });
+  parsed.search = params.join("&");
+  if (password !== undefined) env.PGPASSWORD = password;
   return new Promise((resolve, reject) => {
     execFile(
       "psql",

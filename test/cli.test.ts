@@ -50,6 +50,15 @@ test("up hides database passwords and keeps sqlite paths as written", async (t) 
   assert.match(result.stdout, /CACHE_URL=redis:\/\/user:\*\*\*@localhost:6379\/1/);
   assert.match(result.stdout, /LITE_URL=file:\.\/dev\.db/);
   assert.doesNotMatch(result.stdout, /hunter2/);
+
+  const main = sandbox({
+    "slotenv.json": config({}, { databases: { DATABASE_URL: { kind: "postgres", url: "postgresql://localhost/app?user=dev&password=hunter3" } } }),
+  });
+  t.after(main.cleanup);
+  const postgres = await runCli(main.repo, ["up"], main.home);
+  assert.equal(postgres.code, 0, postgres.stderr);
+  assert.match(postgres.stdout, /DATABASE_URL=postgresql:\/\/localhost\/app\?user=dev&password=\*\*\*/);
+  assert.doesNotMatch(postgres.stdout, /hunter3/);
 });
 
 test("errors are short and exit with code 1", async (t) => {

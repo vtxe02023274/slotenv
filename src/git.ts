@@ -47,6 +47,28 @@ export function mainWorktreeRoot(cwd: string): string | undefined {
   }
 }
 
+export function worktreeRegistrations(gitDir: string): Map<string, { locked: boolean; prunable: boolean }> | undefined {
+  try {
+    const output = execFileSync("git", ["--git-dir", gitDir, "worktree", "list", "--porcelain", "-z"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const registrations = new Map<string, { locked: boolean; prunable: boolean }>();
+    for (const record of output.split("\0\0")) {
+      const [head, ...fields] = record.split("\0");
+      if (!head?.startsWith("worktree ")) continue;
+      const labels = fields.map((field) => field.split(" ", 1)[0]);
+      registrations.set(pathKey(head.slice("worktree ".length)), {
+        locked: labels.includes("locked"),
+        prunable: labels.includes("prunable"),
+      });
+    }
+    return registrations.size ? registrations : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function isIgnored(root: string, file: string): boolean {
   try {
     execFileSync("git", ["check-ignore", "-q", file], { cwd: root, stdio: "ignore" });

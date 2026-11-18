@@ -3,27 +3,22 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { gc, list, up } from "../src/core.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { down, gc, list, up } from "../src/core.js";
 import { currentWorktree } from "../src/git.js";
 import { pathKey } from "../src/paths.js";
 import { setPsqlRunner } from "../src/postgres.js";
 import { homeDir, withLock, withRegistry } from "../src/registry.js";
 import { addWorktree, config, freeBase, removeWorktree, sandbox } from "./helpers.js";
 
-test("an interrupted copy is made again instead of being reused", async (t) => {
+test("a failed postgres create does not take ownership of a database created later", async (t) => {
   const databases = new Set(["app"]);
   const calls: string[] = [];
-  let crash = true;
   setPsqlRunner(async (_url, sql) => {
     calls.push(sql);
     const exists = /datname = '(.+)'$/.exec(sql);
     if (exists?.[1]) return databases.has(exists[1]) ? "1" : "";
-    const create = /^CREATE DATABASE "(.+?)"/.exec(sql);
-    if (create?.[1]) {
-      databases.add(create[1]);
-      if (crash) throw new Error("killed during the copy");
-      return "";
-    }
+    if (sql.startsWith("CREATE DATABASE")) throw new Error("source database is being accessed by other users");
     const drop = /^DROP DATABASE IF EXISTS "(.+?)"/.exec(sql);
     if (drop?.[1]) databases.delete(drop[1]);
     return "";
@@ -34,17 +29,75 @@ test("an interrupted copy is made again instead of being reused", async (t) => {
   });
   t.after(box.cleanup);
   const worktree = addWorktree(box, "crash");
-  await assert.rejects(up(worktree), /killed during the copy/);
-  assert.deepEqual((await list(worktree))[0]?.databases, [{ kind: "postgres", url: "postgres://localhost/app_s1", ready: false }]);
-
-  crash = false;
+  await assert.rejects(up(worktree), /something is connected/);
+  assert.deepEqual((await list(worktree))[0]?.databases ?? [], []);
+  databases.add("app_s1");
   calls.length = 0;
   const claim = await up(worktree);
-  assert.match(claim.warnings.join(" "), /did not finish/);
-  assert.doesNotMatch(claim.warnings.join(" "), /already existed/);
-  assert.ok(calls.some((sql) => sql.startsWith('DROP DATABASE IF EXISTS "app_s1"')));
-  assert.ok(calls.some((sql) => sql.startsWith('CREATE DATABASE "app_s1"')));
-  assert.deepEqual((await list(worktree))[0]?.databases, [{ kind: "postgres", url: "postgres://localhost/app_s1", ready: true }]);
+  assert.match(claim.warnings.join(" "), /already existed/);
+  await down(worktree);
+
+  await up(worktree);
+  const repo = pathKey(currentWorktree(worktree).repo);
+  await withRegistry((registry) => {
+    registry.repos[repo]![pathKey(worktree)]!.databases = [{ kind: "postgres", url: "postgres://localhost/app_s1", ready: false }];
+  });
+  await down(worktree);
+  assert.ok(databases.has("app_s1"));
+  assert.ok(calls.every((sql) => sql.startsWith("SELECT")));
+});
+
+test("down waits for up to finish provisioning and writing the env file", async (t) => {
+  let checked!: () => void;
+  let resume!: () => void;
+  const checking = new Promise<void>((resolve) => { checked = resolve; });
+  const paused = new Promise<void>((resolve) => { resume = resolve; });
+  const databases = new Set<string>();
+  setPsqlRunner(async (_url, sql) => {
+    if (sql.startsWith("SELECT")) {
+      checked();
+      await paused;
+    } else if (sql.startsWith("CREATE DATABASE")) databases.add("app_s1");
+    else if (sql.startsWith("DROP DATABASE")) databases.delete("app_s1");
+    return "";
+  });
+  t.after(() => setPsqlRunner(undefined));
+  const box = sandbox({
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+  });
+  t.after(box.cleanup);
+  const worktree = addWorktree(box, "overlap");
+  const starting = up(worktree);
+  await checking;
+  const stopping = down(worktree);
+  try {
+    await Promise.race([stopping, sleep(150)]);
+  } finally {
+    resume();
+  }
+  const [claim, released] = await Promise.all([starting, stopping]);
+  assert.deepEqual(released.droppedDatabases, claim.createdDatabases);
+  assert.equal(databases.size, 0);
+  assert.equal(existsSync(join(worktree, ".env.local")), false);
+  assert.deepEqual(await list(worktree), []);
+});
+
+test("provisioning stops before creating a database when its claim is missing", async (t) => {
+  const box = sandbox({
+    "slotenv.json": config({ WEB_PORT: await freeBase() }, { databases: { DATABASE_URL: { kind: "postgres", url: "postgres://localhost/app" } } }),
+  });
+  t.after(box.cleanup);
+  const worktree = addWorktree(box, "lost");
+  let created = false;
+  setPsqlRunner(async (_url, sql) => {
+    if (sql.startsWith("SELECT")) await withRegistry((registry) => { registry.repos = {}; });
+    else if (sql.startsWith("CREATE")) created = true;
+    return "";
+  });
+  t.after(() => setPsqlRunner(undefined));
+  await assert.rejects(up(worktree), /no longer claimed/);
+  assert.equal(created, false);
+  assert.equal(existsSync(join(worktree, ".env.local")), false);
 });
 
 test("removing a worktree and adding one with the same name starts a fresh slot", async (t) => {

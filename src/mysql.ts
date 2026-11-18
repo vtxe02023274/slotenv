@@ -95,17 +95,14 @@ export async function mysqlDatabaseExists(url: string): Promise<boolean> {
   return (await runner.query(url, sql)) === "1";
 }
 
-export async function createMysqlDatabase(url: string, template: string | undefined): Promise<void> {
+export async function createMysqlDatabase(url: string): Promise<void> {
   await runner.query(url, `CREATE DATABASE ${quoteName(databaseName(url))}`);
-  if (!template) return;
+}
+
+export async function copyMysqlDatabase(url: string, template: string): Promise<void> {
   const source = new URL(url);
   source.pathname = `/${encodeURIComponent(template)}`;
-  try {
-    await runner.copy(source.toString(), url);
-  } catch (error) {
-    await runner.query(url, `DROP DATABASE IF EXISTS ${quoteName(databaseName(url))}`).catch(() => undefined);
-    throw error;
-  }
+  await runner.copy(source.toString(), url);
 }
 
 export async function dropMysqlDatabase(url: string): Promise<void> {
